@@ -367,15 +367,26 @@ pub fn enable_global_autostart() -> Result<CustomResult, CustomResult> {
 
     // 增强版：修改任务设置（补充会话交互配置）
     let ps_command = format!(
-        "$task = Get-ScheduledTask -TaskName '{}'; \
-         $task.Settings.DisallowStartIfOnBatteries = $false; \
-         $task.Settings.StopIfGoingOnBatteries = $false; \
-         $task.Settings.AllowInteractive = $true; \
-         $task.Settings.Hidden = $false; \
-         $task.Principal.LogonType = 'InteractiveToken'; \
-         Set-ScheduledTask -InputObject $task; \
-         Write-Host '任务配置已更新：' $task.Principal.LogonType",
-        task_name
+       r#"
+        $task = Get-ScheduledTask -TaskName '{}' -ErrorAction Stop;
+        $task.Settings.DisallowStartIfOnBatteries = $false;
+        $task.Settings.StopIfGoingOnBatteries = $false;
+        $task.Settings.AllowStartOnDemand = $true;
+        $task.Settings.StartWhenAvailable = $true;
+        $task.Settings.MultipleInstances = 'Parallel';
+        $task.Settings.AllowHardTerminate = $true;
+        $task.Settings.DisallowStartOnRemoteAppSession = $false;
+        $task.Settings.IdleSettings.IdleDuration = 'PT0S';
+        $task.Settings.IdleSettings.WaitTimeout = 'PT0S';
+        $task.Settings.IdleSettings.StopOnIdleEnd = $false;
+        $task.Settings.IdleSettings.RestartOnIdle = $false;
+        $task.Settings.AllowInteractive = $true;
+        $task.Principal.LogonType = 'InteractiveToken';
+        $task.Principal.RunLevel = 'HighestAvailable';
+        $task.Settings.RestartCount = 3;
+        $task.Settings.RestartInterval = 'PT1M';
+        Set-ScheduledTask -InputObject $task -ErrorAction Stop;
+        "#, task_name
     );
 
     let ps_output = Command::new("powershell")

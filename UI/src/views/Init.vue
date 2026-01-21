@@ -251,7 +251,7 @@
                     <div style="max-width: 450px; margin: 0 auto;">
                         <AccountAuthForm 
                             v-model="authForm" 
-                            custom-tips="此密码仅用于 DLL 调起 WinLogon 认证，程序不会存储此密码"
+                            custom-tips="请输入系统密码或微软账号密码，<font color='red'>程序不支持Pin</font><br />此密码仅用于 DLL 调起 WinLogon 认证，程序不会存储此密码"
                         />
                         <el-button type="success" style="width: 100%" @click="finishInit" :loading="isFinalizing">执行最终测试</el-button>
                     </div>

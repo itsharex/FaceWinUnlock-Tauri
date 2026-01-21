@@ -1,6 +1,6 @@
 use opencv::{objdetect::FaceRecognizerSF_DisType, prelude::FaceRecognizerSFTraitConst};
 use serde::Deserialize;
-use std::{sync::atomic::Ordering, thread::sleep, time::Duration};
+use std::{sync::atomic::Ordering, thread::sleep, time::{Duration, SystemTime, UNIX_EPOCH}};
 use tauri_plugin_log::log::{error, info, warn};
 use windows::{core::HSTRING, Win32::{
     Foundation::{HWND, LPARAM, LRESULT, WPARAM},
@@ -14,7 +14,7 @@ use windows::{core::HSTRING, Win32::{
 }};
 
 use crate::{
-    modules::faces::{get_feature, load_face_data, read_mat_from_camera}, utils::{api::{open_camera, stop_camera, unlock}, pipe::{read, Client, Server}}, APP_STATE, CAMERA_INDEX, DB_POOL, IS_BREAK_THREAD, IS_LOCKED, IS_RUN, MATCH_FAIL_COUNT, ROOT_DIR, TIMER_ID_LOCK_CHECK
+    modules::faces::{get_feature, load_face_data, read_mat_from_camera}, utils::{api::{open_camera, stop_camera, unlock}, pipe::{read, Client, Server}}, APP_STATE, CAMERA_INDEX, DB_POOL, IS_BREAK_THREAD, IS_LOCKED, IS_RUN, MATCH_FAIL_COUNT, RETRY_DELAY, ROOT_DIR, TIMER_ID_LOCK_CHECK
 };
 
 // 最大成功次数，超过这个次数判断为面容匹配
@@ -23,6 +23,8 @@ const MAX_SUCCESS: usize = 3;
 const MAX_FAIL: usize = 3;
 // 最大重试次数，这不能让用户自己输入，如果错误次数太多，微软会锁定账户的，很危险
 const MAX_RETRY: i32 = 3;
+// 记录上一次发送管道消息的时间戳（毫秒）
+static mut LAST_SEND_TIME: u128 = 0;
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")] // 适配 JSON 中的驼峰命名
@@ -38,6 +40,33 @@ pub struct FaceExtraData {
     pub lock: bool,
     /// 人脸检测置信度阈值
     pub face_detection_threshold: f32,
+}
+
+fn can_retry() -> bool {
+    unsafe {
+        // 获取当前时间戳（毫秒）
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_millis();
+
+        let delay: u128 = match RETRY_DELAY.load(Ordering::SeqCst).try_into() {
+            Ok(interval) => {
+                interval
+            },
+            Err(_) => {
+                10000
+            }
+        };
+
+        // 如果距离上次发送超过最小间隔，更新时间并允许发送
+        if now - LAST_SEND_TIME >= delay {
+            LAST_SEND_TIME = now;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 // windows回调
@@ -140,6 +169,23 @@ pub unsafe extern "system" fn wnd_proc_subclass(
 
                                                 if face_recog_type == "operation" {
                                                     info!("按用户操作调用面容识别代码");
+                                                    // 设置重试
+                                                    let time = conn.query_row(
+                                                        "SELECT val FROM options WHERE key = 'retryDelay';",
+                                                        [],
+                                                        |row| row.get::<&str, String>("val"),
+                                                    ).unwrap_or(String::from("10.0"));
+                                                    let time_ms: f32 = match time.parse::<f32>() {
+                                                        Ok(seconds) => seconds * 1000.0,
+                                                        Err(e) => {
+                                                            error!(
+                                                                "秒数字符串转换失败: {}，使用默认值 10000 毫秒",
+                                                                e
+                                                            );
+                                                            10.0 * 1000.0
+                                                        }
+                                                    };
+                                                    RETRY_DELAY.store(time_ms as i32, Ordering::SeqCst);
                                                     // 锁屏连接管道，等待管道传来的运行
                                                     IS_BREAK_THREAD.store(false, Ordering::SeqCst);
                                                     // 开启一个新的线程
@@ -158,8 +204,10 @@ pub unsafe extern "system" fn wnd_proc_subclass(
                                                                 // 等待管道的run命令
                                                                 if let Ok(content) =  read(server.handle) {
                                                                     if content.contains("run") && !IS_RUN.load(Ordering::SeqCst) && MATCH_FAIL_COUNT.load(Ordering::SeqCst) < MAX_RETRY {
-                                                                        info!("运行面容识别代码");
-                                                                        run_before();
+                                                                        if can_retry() {
+                                                                            info!("运行面容识别代码");
+                                                                            run_before();
+                                                                        }
                                                                     }
                                                                 }
                                                             }

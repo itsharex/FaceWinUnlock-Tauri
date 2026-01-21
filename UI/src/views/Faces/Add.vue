@@ -459,7 +459,7 @@
                         </el-form-item>
 
                         <el-divider>关联系统账户</el-divider>
-                        <AccountAuthForm v-model="authForm" :small="true" :customTips="'此密码仅用于 DLL 调起 WinLogon 认证<br />不会上传至任何云端<br />注意：<strong>当前使用明文存储</strong>'"/>
+                        <AccountAuthForm v-model="authForm" :small="true" :customTips="'请输入系统密码或微软账号密码，<font color=\'red\'>程序不支持Pin</font><br/>此密码仅用于 DLL 调起 WinLogon 认证<br />不会上传至任何云端<br />注意：<strong>当前使用明文存储</strong>'"/>
 
                         <div class="footer-btns">
                             <el-button type="success" size="large" @click="handleSave" :disabled="!capturedImage || isCameraStreaming" :loading="isProcessing">

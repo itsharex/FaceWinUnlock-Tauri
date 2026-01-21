@@ -29,7 +29,6 @@ use CSampleProvider::SampleProvider;
 // 全局引用计数器，用于管理DLL的生命周期
 // 当引用计数为0时，系统可以安全卸载DLL
 static G_REF_COUNT: AtomicI32 = AtomicI32::new(0);
-static MIN_SEND_INTERVAL: AtomicI32 = AtomicI32::new(10000);
 
 /// 增加DLL的引用计数
 pub fn dll_add_ref() {
@@ -291,15 +290,6 @@ pub unsafe extern "system" fn DllMain(
             }
             
             info!("DllMain: 基础框架初始化完成");
-
-            if let Ok(delay) = read_facewinunlock_registry("RETRY_DELAY") {
-                let mut delay = delay.parse::<f32>().unwrap_or(10000.00);
-                if delay != 10000.00 {
-                    // 前端设置的是秒，需要转换为毫秒
-                    delay = delay * 1000.00;
-                }
-                MIN_SEND_INTERVAL.store(delay as i32, Ordering::SeqCst);
-            }
 
             if let Err(e) = result {
                 warn!("从注册表加载配置失败：{}", e);

@@ -21,7 +21,7 @@
 	const currentWindow = getCurrentWindow();
 
 	// 打包时注释
-	// attachConsole();
+	attachConsole();
 
 	resourceDir().then((result)=>{
 		localStorage.setItem('exe_dir', result);
@@ -39,7 +39,6 @@
 			router.push('/init');
 		}
 		info("程序初始化完成");
-		console.log(optionsStore.getOptionValueByKey('silentRun'));
 		if(optionsStore.getOptionValueByKey('silentRun') != "true"){
 			currentWindow.isVisible().then((visible) => {
 				if(!visible){

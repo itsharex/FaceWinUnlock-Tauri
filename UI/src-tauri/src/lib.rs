@@ -57,10 +57,14 @@ pub struct AppState {
 static IS_BREAK_THREAD: AtomicBool = AtomicBool::new(true);
 // 是否正在运行面容识别？
 static IS_RUN: AtomicBool = AtomicBool::new(false);
+// 多长时间进行重试？
+static RETRY_DELAY: AtomicI32 = AtomicI32::new(10000);
+
 // 定义全局只读连接池，用来在解锁中对数据库读操作
 lazy_static::lazy_static! {
     // 系统托盘
     static ref GLOBAL_TRAY: Mutex<Option<Arc<TrayIcon<Wry>>>> = Mutex::new(None);
+    static ref TRAY_IS_READY: Mutex<bool> = Mutex::new(false);
     static ref DB_POOL: Mutex<Option<Pool<SqliteConnectionManager>>> = Mutex::new(None);
     // 不在使用状态管理，因为proc获取不到
     static ref APP_STATE: Mutex<AppState> = Mutex::new(AppState {

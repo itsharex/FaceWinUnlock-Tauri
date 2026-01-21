@@ -20,7 +20,7 @@ use windows_core::HSTRING;
 
 use crate::{
     Pipe::{read, Client, Server},
-    SharedCredentials, MIN_SEND_INTERVAL,
+    SharedCredentials
 };
 
 // 包装 COM 接口，使其可以跨线程传输
@@ -56,15 +56,8 @@ fn can_send() -> bool {
             .unwrap_or_default()
             .as_millis();
 
-        // cy: 有时间在优化，这里是个死值，不用每次都读
-        let delay: u128 = match MIN_SEND_INTERVAL.load(Ordering::SeqCst).try_into() {
-            Ok(interval) => {
-                interval
-            },
-            Err(_) => {
-                10000
-            }
-        };
+        // UI端做限制
+        let delay: u128 = 500;
 
         // 如果距离上次发送超过最小间隔，更新时间并允许发送
         if now - LAST_SEND_TIME >= delay {

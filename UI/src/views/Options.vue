@@ -39,12 +39,11 @@
 		faceRecogDelay: parseFloat(optionsStore.getOptionValueByKey('faceRecogDelay')) || 10.0,
 		faceRecogType: optionsStore.getOptionValueByKey('faceRecogType') || 'operation',
 		silentRun: optionsStore.getOptionValueByKey('silentRun') ? (optionsStore.getOptionValueByKey('silentRun') == 'false' ? false : true) : false,
-
+		retryDelay: parseFloat(optionsStore.getOptionValueByKey('retryDelay')) || 10.0,
 	})
 
 	const dllConfig = reactive({
-		showTile: optionsStore.getOptionValueByKey('showTile') ? (optionsStore.getOptionValueByKey('showTile') == 'false' ? false : true) : true,
-		retryDelay: parseFloat(optionsStore.getOptionValueByKey('retryDelay')) || 10.0,
+		showTile: optionsStore.getOptionValueByKey('showTile') ? (optionsStore.getOptionValueByKey('showTile') == 'false' ? false : true) : true
 	})
 
 	const refreshCameraList = ()=>{
@@ -106,7 +105,8 @@
 			camera: config.camera,
 			faceRecogDelay: config.faceRecogDelay,
 			faceRecogType: config.faceRecogType,
-			silentRun: config.silentRun
+			silentRun: config.silentRun,
+			retryDelay: config.retryDelay,
 		}).then((errorArray)=>{
 			if(errorArray.length > 0){
 				ElMessage.warning({
@@ -123,14 +123,10 @@
 			{
 				key: "SHOW_TILE",
 				value: dllConfig.showTile ? "1" : "0"
-			},{
-				key: "RETRY_DELAY",
-				value: dllConfig.retryDelay.toFixed(2)
 			}
 		]}).then(()=>{
 			return optionsStore.saveOptions({
-				showTile: dllConfig.showTile,
-				retryDelay: dllConfig.retryDelay,
+				showTile: dllConfig.showTile
 			})
 		}).then((errorArray)=>{
 			if(errorArray.length > 0){
@@ -297,6 +293,13 @@
 									</div>
 									<el-switch v-model="config.silentRun"/>
 								</div>
+								<div class="option-row" title="开发未完成，暂时不可用">
+									<div class="row-text">
+										<p class="label">开机面容识别</p>
+										<p class="sub">第一次开机时就可以使用面容识别，开发未完成，暂时不可用</p>
+									</div>
+									<el-switch :value="false" :disabled="true"/>
+								</div>
 								<div class="option-row">
 									<div class="row-text">
 										<p class="label">面容识别方式</p>
@@ -315,6 +318,20 @@
 									<el-input-number 
 										v-model="config.faceRecogDelay"
 										:min="0.1" 
+										:max="120" 
+										:step="1" 
+										:precision="1"
+										style="width: 120px;"
+									/>
+								</div>
+								<div class="option-row" v-else>
+									<div class="row-text">
+										<p class="label">重试时间（秒）</p>
+										<p class="sub">在面容不匹配时，时隔多长时间允许重试</p>
+									</div>
+									<el-input-number 
+										v-model="config.retryDelay"
+										:min="1" 
 										:max="120" 
 										:step="1" 
 										:precision="1"
@@ -369,20 +386,6 @@
 								<p class="sub">在 Windows 锁屏界面显示解锁磁贴</p>
 							</div>
 							<el-switch v-model="dllConfig.showTile" />
-						</div>
-						<div class="option-row">
-							<div class="row-text">
-								<p class="label">重试时间（秒）</p>
-								<p class="sub">在面容不匹配时，时隔多长时间允许重试</p>
-							</div>
-							<el-input-number 
-								v-model="dllConfig.retryDelay"
-								:min="10" 
-								:max="120" 
-								:step="1" 
-								:precision="1"
-								style="width: 120px;"
-							/>
 						</div>
 					</div>
 				</div>

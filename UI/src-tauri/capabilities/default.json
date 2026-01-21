@@ -16,6 +16,8 @@
     "opener:allow-default-urls",
     "log:default",
     "fs:default",
+    "core:window:allow-show",
+    "core:window:allow-set-focus",
     {
       "identifier": "fs:allow-exists",
       "allow": [
