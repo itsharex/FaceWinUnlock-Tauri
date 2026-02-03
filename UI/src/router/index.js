@@ -6,9 +6,11 @@ import List from '../views/Faces/List.vue'
 import Add from '../views/Faces/Add.vue'
 import Options from '../views/Options.vue'
 import Logs from '../views/Logs.vue'
+import Login from '../views/Login.vue'
 
 const routes = [
 	{ path: '/init', name: 'Init', component: Init, meta: { title: '系统初始化' }},
+	{ path: '/login', name: 'Login', component: Login, meta: { title: '登录' }},
 	{ 
 		path: '/',
 		component: MainLayout,

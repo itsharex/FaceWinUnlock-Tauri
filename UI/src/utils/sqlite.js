@@ -27,7 +27,7 @@ const databseTable = [
             { name: 'id', type: 'INTEGER', primaryKey: true, autoIncrement: true, notNull: true },
             // 对应的Windows用户名
             { name: 'user_name', type: 'TEXT', notNull: true },
-            // 加密后的Windows密码（由DLL用来调起登录）
+            // Windows密码（由DLL用来调起登录）
             { name: 'user_pwd', type: 'TEXT', notNull: true },
             // windows账户类型
             { name: 'account_type', type: 'TEXT', notNull: true },
@@ -52,6 +52,8 @@ const databseTable = [
             { name: 'face_id', type: 'INTEGER' },
             // 是否成功解锁
             { name: 'is_unlock', type: 'INTEGER', notNull: true },
+            // 解锁失败时的截图
+            { name: 'block_img', type: 'TEXT' },
             // 上次更新时间
             { name: 'lastTime', type: 'TEXT', defaultValue: "datetime('now', 'localtime')" }
         ]

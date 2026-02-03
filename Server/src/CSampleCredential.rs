@@ -6,7 +6,7 @@ use windows::Win32::{
     }
 };
 use windows_core::{implement, BOOL, PCWSTR, PWSTR};
-use crate::{dll_add_ref, dll_release, CLSID_SampleProvider, SharedCredentials};
+use crate::{CLSID_SampleProvider, SharedCredentials};
 
 /// 凭据实现类，代表登录界面上的一个磁贴
 /// 每个凭据对应一个可选择的登录选项
@@ -22,7 +22,9 @@ impl SampleCredential {
     /// 创建新的凭据实例
     pub fn new(shared_creds: Arc<Mutex<SharedCredentials>>, auth_package_id: u32) -> Self {
         info!("SampleCredential::new - 创建凭据实例");
-        dll_add_ref(); // 增加DLL引用计数
+        // 引用计数不在此处管理了
+        // 原因是：当 SampleCredential 转换为 ICredentialProviderCredential COM 接口后，它的生命周期由 Windows COM 运行时管理，而不是 Rust
+        // 所以 SampleCredential 的Drop永远不会被调用，在new中创建的引用计数也永远不会减少
         Self { 
             events: Mutex::new(None),
             shared_creds: shared_creds,
@@ -34,7 +36,6 @@ impl SampleCredential {
 impl Drop for SampleCredential {
     fn drop(&mut self) {
         info!("SampleCredential::drop - 销毁凭据实例");
-        dll_release(); // 减少DLL引用计数，与new中的dll_add_ref()对应
     }
 }
 
@@ -245,6 +246,8 @@ impl ICredentialProviderCredential_Impl for SampleCredential_Impl {
             // 重点：AuthenticationPackage 需要通过 LsaLookupAuthenticationPackage 获取
             // 通常在 Provider 初始化时获取一次。
             (*pcpcs).ulAuthenticationPackage = self.auth_package_id;
+
+            info!("用户名密码已发送到 LSA");
         }
         Ok(())
     }

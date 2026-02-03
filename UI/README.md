@@ -6,7 +6,7 @@
 
 * **现代化 UI**: 基于 Element Plus 构建。
 * **系统级集成**: 自动注册 WinLogon 凭据提供程序 (Credential Provider)。
-* **双账户支持**: 同时支持本地账户 (Local Account) 与微软联机账户 (MSA) 解锁（联机账户未测试）。
+* **双账户支持**: 同时支持本地账户 (Local Account) 与微软联机账户 (MSA) 解锁。
 * **轻量级后端**: Rust 后端确保了高效的文件 IO 处理与注册表操作安全性。
 * **隐私保护**: 所有面容特征数据与系统凭据均通过 SQLite 本地存储，不上传云端。
 
@@ -57,9 +57,11 @@ npm run tauri build
 ```
 
 5. **资源文件**
-- [FaceWinUnlock-Tauri.dll](https://github.com/zs1083339604/Winlogon/releases/tag/v1.0)，下载1.0.zip，解压后得到DLL
+- [FaceWinUnlock-Tauri.dll](/Server)，编译后得到dll
+- [FaceWinUnlock-Server.exe](/Unlock)，编译后得到exe
 - [face_detection_yunet_2023mar.onnx](https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx)
 - [face_recognition_sface_2021dec.onnx](https://github.com/opencv/opencv_zoo/blob/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx)
+- [detect.onnx](https://modelscope.cn/models/iic/cv_manual_face-liveness_flrgb/summary)
 - [opencv_world4120.dll](https://github.com/opencv/opencv/releases/tag/4.12.0)，需要下载opencv源代码进行编译，[编译教程点这](https://www.cnblogs.com/-CO-/p/18075315)
 
 ## 📂 项目结构
@@ -89,5 +91,4 @@ npm run tauri build
 - 面容添加页面应添加摄像设备选择、人脸阈值等内容
 - 当前用户名密码使用明文存储
 - 面容添加页面未添加摄像头选项
-- 开机自启功能仅当前用户，应改为所有用户
 - 登录日志由Rust写入数据库，改为JS更好

@@ -5,6 +5,8 @@
 	import { useFacesStore } from '../stores/faces';
 	import { useUnlockLog } from '../hook/useUnlockLog';
 	import { ElMessage } from 'element-plus';
+	import { invoke } from '@tauri-apps/api/core';
+	import { formatObjectString } from '../utils/function';
 
 	const optionsStore = useOptionsStore();
 	const facesStore = useFacesStore();
@@ -18,6 +20,7 @@
 
 	const systemStatus = ref([
 		{ name: 'WinLogon 核心组件', desc: '系统登录凭据对接', active: true },
+		{ name: '解锁核心服务', desc: '', active: false },
 		{ name: '生物识别传感器', desc: '未知 前往设置页面设置', active: false },
 		{ name: '人脸识别模型', desc: 'OpenCV', active: true }
 	]);
@@ -52,9 +55,17 @@
 	let tempCameraIndex = optionsStore.getOptionValueByKey('camera');
 	if(tempCameraList && tempCameraIndex){
 		let tempList = JSON.parse(tempCameraList);
-		systemStatus.value[1].desc = tempList[tempCameraIndex].camera_name;
-		systemStatus.value[1].active = true;
+		systemStatus.value[2].desc = tempList[tempCameraIndex].camera_name;
+		systemStatus.value[2].active = true;
 	}
+
+	invoke("check_process_running").then(()=>{
+		systemStatus.value[1].desc = '负责进行面容认证的服务';
+		systemStatus.value[1].active = true;
+	}).catch(error=>{
+		systemStatus.value[1].desc = formatObjectString(error);
+		systemStatus.value[1].active = false;
+	})
 </script>
     
 <template>

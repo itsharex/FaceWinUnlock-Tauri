@@ -111,9 +111,98 @@ pub fn check_face_from_camera(face_detection_threshold: f32) -> Result<CustomRes
 pub async fn verify_face(
     reference_base64: String,
     face_detection_threshold: f32,
+    liveness_enabled: bool,
+    liveness_threshold: f32,
 ) -> Result<CustomResult, CustomResult> {
     let frame = read_mat_from_camera()
         .map_err(|e| CustomResult::error(Some(format!("摄像头读取失败: {}", e)), None))?;
+    let mut resized_mat_v = frame.clone();
+    if let Ok(new_mat) = resize_mat(&frame, 800.0) {
+        resized_mat_v = new_mat;
+    }
+
+    // 获取特征点，并获取人脸，对人脸进行活体检测
+    // 如果对整个图片进行活体检测，误判机率很高
+    let result = get_feature(&resized_mat_v, face_detection_threshold);
+    if let Err(e) = &result {
+        if e.contains("未检测到人脸") {
+            return Ok(CustomResult::success(
+                None,
+                Some(json!(
+                    {
+                        "success": false,
+                        "message": "未检测到人脸",
+                        "score": 0,
+                        "display_base64": mat_to_base64(&resized_mat_v)
+                    }
+                )),
+            ))
+        } else {
+            CustomResult::error(Some(format!("特征提取失败: {}", e)), None);
+        }
+    }
+    let (cur_aligned, cur_feature) = result.unwrap();
+    
+    if liveness_enabled {
+        let mut app_state = APP_STATE
+            .lock()
+            .map_err(|e| CustomResult::error(Some(format!("获取app状态失败 {}", e)), None))?;
+        // 开启了活体检测
+        if app_state.liveness.is_none() {
+            return Err(CustomResult::error(
+                Some(String::from("活体检测模型未初始化")),
+                None,
+            ));
+        }
+        let liveness_net = &mut app_state.liveness.as_mut().unwrap().inner;
+
+        // 图像预处理
+        // blob_from_image 自动完成: 缩放、中心裁剪、BGR转RGB、归一化
+        let blob = opencv::dnn::blob_from_image(
+            &cur_aligned,
+            2.0 / 255.0,              // 缩放比例 (1/127.5)
+            Size::new(112, 112), // 尺寸
+            Scalar::new(127.5, 127.5, 127.5, 0.0), // 减去均值
+            true,                     // swapRB: BGR -> RGB
+            false,                    // crop
+            opencv::core::CV_32F      // ddepth
+        ).map_err(|e| CustomResult::error(Some(format!("创建 Blob 失败: {:?}", e)), None))?;
+
+        // 执行活体检测推理
+        liveness_net.set_input(&blob, "", 1.0, Scalar::default()).map_err(|e| CustomResult::error(Some(format!("设置输入失败: {:?}", e)), None))?;
+        let mut outputs = Vector::<Mat>::new();
+        liveness_net.forward(&mut outputs, &Vector::from_iter(vec![""]))
+            .map_err(|e| CustomResult::error(Some(format!("执行推理失败: {:?}", e)), None))?;
+
+        let output_mat = outputs.get(0).map_err(|_| CustomResult::error(Some(String::from("无输出")), None))?;
+        let data: &[f32] = output_mat.data_typed().map_err(|e| CustomResult::error(Some(format!("获取数据失败: {:?}", e)), None))?;
+
+        let mut is_live = false;
+        let mut real_prob = 0.0;
+        
+        if data.len() >= 2 {
+            real_prob = data[1];
+            is_live = real_prob >= liveness_threshold;            
+        } else {
+            let score = data[0];
+            real_prob = 1.0 - score;
+            is_live = real_prob >= liveness_threshold;
+        }
+
+        if !is_live {
+            return Ok(CustomResult::success(
+                None,
+                Some(json!(
+                    {
+                        "success": false,
+                        "message": format!("活体检测未通过，概率 {:.2}%", real_prob * 100.0),
+                        "score": 0,
+                        "display_base64": mat_to_base64(&resized_mat_v)
+                    }
+                )),
+            ))
+        }
+    }
     // 解码图片
     let ref_bytes = general_purpose::STANDARD
         .decode(reference_base64)
@@ -122,15 +211,13 @@ pub async fn verify_face(
     let ref_img = imgcodecs::imdecode(&v, opencv::imgcodecs::IMREAD_COLOR)
         .map_err(|e| CustomResult::error(Some(format!("从bse64读取图片失败: {}", e)), None))?;
 
-    let ref_feature = get_feature(&ref_img, face_detection_threshold)
+    let (_ref_aligned, ref_feature) = get_feature(&ref_img, face_detection_threshold)
         .map_err(|e| CustomResult::error(Some(format!("特征提取失败: {}", e)), None))?;
-    let cur_feature = get_feature(&frame, face_detection_threshold)
-        .map_err(|e| CustomResult::error(Some(format!("特征提取失败: {}", e)), None))?;
+    
 
     let app_state = APP_STATE
         .lock()
         .map_err(|e| CustomResult::error(Some(format!("获取app状态失败 {}", e)), None))?;
-
     let Some(recognizer) = app_state.recognizer.as_ref() else {
         return Err(CustomResult::error(
             Some(String::from("人脸识别模型未初始化")),
@@ -147,16 +234,14 @@ pub async fn verify_face(
         )
         .map_err(|e| CustomResult::error(Some(format!("特征匹配失败: {}", e)), None))?;
 
-    let mut result_mat = frame.clone();
-    if let Ok(resize_mat) = resize_mat(&frame, 800.0) {
-        result_mat = resize_mat;
-    }
     Ok(CustomResult::success(
         None,
         Some(json!(
             {
+                "success": true,
+                "message": "",
                 "score": score,
-                "display_base64": mat_to_base64(&result_mat)
+                "display_base64": mat_to_base64(&resized_mat_v)
             }
         )),
     ))
@@ -186,10 +271,10 @@ pub fn save_face_registration(
     let ref_img = imgcodecs::imdecode(&v, opencv::imgcodecs::IMREAD_COLOR)
         .map_err(|e| CustomResult::error(Some(format!("从bse64读取图片失败: {}", e)), None))?;
 
-    let feature_mat = get_feature(&ref_img, face_detection_threshold)
+    let (_ref_aligned, ref_feature) = get_feature(&ref_img, face_detection_threshold)
         .map_err(|e| CustomResult::error(Some(format!("特征提取失败: {}", e)), None))?;
 
-    let descriptor = FaceDescriptor::from_mat(&name, &feature_mat)
+    let descriptor = FaceDescriptor::from_mat(&name, &ref_feature)
         .map_err(|e| CustomResult::error(Some(format!("特征描述失败: {}", e)), None))?;
 
     let base_name = Uuid::new_v4();
@@ -231,8 +316,9 @@ pub fn save_face_registration(
     ))
 }
 
-// 提取特征点
-pub fn get_feature(img: &Mat, face_detection_threshold: f32) -> Result<Mat, String> {
+/// 提取特征点
+/// return (裁切后的图片, 特征点)
+pub fn get_feature(img: &Mat, face_detection_threshold: f32) -> Result<(Mat, Mat), String> {
     let mut app_state = APP_STATE
         .lock()
         .map_err(|e| format!("获取app状态失败 {}", e))?;
@@ -278,7 +364,7 @@ pub fn get_feature(img: &Mat, face_detection_threshold: f32) -> Result<Mat, Stri
             .feature(&aligned, &mut feature)
             .map_err(|e| format!("特征提取失败: {}", e))?;
 
-        Ok(feature.clone())
+        Ok((aligned.clone(), feature.clone()))
     } else {
         Err("未检测到人脸".into())
     }

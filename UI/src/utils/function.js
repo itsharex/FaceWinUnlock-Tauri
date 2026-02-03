@@ -114,6 +114,19 @@ function removeFace(face_name, tips = "删除面容"){
     });
 }
 
+/**
+ * 计算消息的SHA-256哈希值
+ * @param {string} message 要哈希的消息
+ * @returns {Promise<string>} 哈希值的十六进制字符串表示
+ */
+async function hashMessage(message) {
+  const msgUint8 = new TextEncoder().encode(message);                           // 编码为 (utf-8) Uint8Array
+  const hashBuffer = await crypto.subtle.digest('SHA-256', msgUint8);           // 计算哈希
+  const hashArray = Array.from(new Uint8Array(hashBuffer));                     // 转换为数组
+  const hashHex = hashArray.map(b => b.toString(16).padStart(2, '0')).join(''); // 转为十六进制字符串
+  return hashHex;
+}
+
 export {
-    formatObjectString, getCurrentDateTime, getFileNameByWindows, handleLocalAccount, removeFace
+    formatObjectString, getCurrentDateTime, getFileNameByWindows, handleLocalAccount, removeFace, hashMessage
 }

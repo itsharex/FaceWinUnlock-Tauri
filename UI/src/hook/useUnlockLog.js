@@ -1,4 +1,4 @@
-import { selectCustom } from '../utils/sqlite';
+import { selectCustom, update } from '../utils/sqlite';
 import { info, error as errorLog, warn } from '@tauri-apps/plugin-log';
 import { formatObjectString } from '../utils/function';
 
@@ -112,10 +112,23 @@ export function useUnlockLog() {
         });
     };
 
+    const deleteBlockImage = (id) => {
+        return new Promise((resolve, reject) => {
+            update("unlock_log", {block_img: null}, "id = ?", [id]).then(()=>{
+                resolve();
+            }).catch((error)=>{
+                const info = formatObjectString(`删除解锁图片 ${id} 失败：`, error);
+                errorLog(info);
+                reject(error);
+            });
+        });
+    }
+
     return {
         queryAllLogs,
         queryLogsByPage,
         queryTodayLogs,
-        queryLogsByDate
+        queryLogsByDate,
+        deleteBlockImage
     };
 }

@@ -8,13 +8,16 @@
 	} from '@element-plus/icons-vue'
 	import { useFile } from '../hook/useFile'
 	import { useUnlockLog } from '../hook/useUnlockLog';
-	import { ElMessage } from 'element-plus';
+	import { ElMessage, ElMessageBox } from 'element-plus';
 
 	const logsType = ref('unlock');
 	const searchQuery = ref('');
 	const filterLevel = ref('All');
-	const { readText } = useFile();
-	const { queryLogsByPage } = useUnlockLog();
+	const { readText, read, reomve } = useFile();
+	const { queryLogsByPage, deleteBlockImage } = useUnlockLog();
+	// 图片弹窗相关
+	const imageVisiable = ref(false);
+	const imgSrc = ref('');
 
 	// 分页相关配置
 	const currentPage = ref(1);
@@ -31,7 +34,9 @@
 			createTime: item.lastTime,
 			level: 'INFO',
 			module: '登录',
-			content: item.is_unlock === 1 ? '登录成功' : '登录失败'
+			content: item.is_unlock === 1 ? '登录成功' : '登录失败' + (item.block_img ? '，并保存了解锁失败截图' : ''),
+			blockImg: item.block_img,
+			id: item.id
 		}));
 	};
 
@@ -84,8 +89,8 @@
 		});
 	};
 
-	// 解析DLL日志
-	const parseDllLogs = (logText) => {
+	// 解析DLL和服务日志
+	const parseDllLogs = (logText, moduleName = "DLL") => {
 		if (!logText) return [];
 		const lines = logText.split('\n').filter(line => line.trim());
 		return lines.map(line => {
@@ -96,7 +101,7 @@
 				return {
 					createTime: `${match[1]}`, // 补充日期+时间
 					level: match[2], // 日志级别
-					module: 'DLL', // 固定模块名
+					module: moduleName, // 固定模块名
 					content: match[3] || ''
 				};
 			}
@@ -104,7 +109,7 @@
 			return {
 				createTime: `${line.slice(0, 8)}`,
 				level: 'INFO',
-				module: 'DLL',
+				module: moduleName,
 				content: line
 			};
 		});
@@ -125,13 +130,19 @@
 				const res = await readText('logs/app.log');
 				const allLogs = parseSoftLogs(res);
 				total.value = allLogs.length;
-				logData = allLogs;
+				logData = allLogs.reverse();;
 			} else if (logsType.value === 'dll') {
 				// 读取文件并解析
 				const res = await readText('logs/facewinunlock.log');
 				const allLogs = parseDllLogs(res);
 				total.value = allLogs.length;
-				logData = allLogs;
+				logData = allLogs.reverse();;
+			} else if (logsType.value === 'service') {
+				// 读取文件并解析
+				const res = await readText('logs/unlock.log');
+				const allLogs = parseDllLogs(res, 'SERVICE');
+				total.value = allLogs.length;
+				logData = allLogs.reverse();;
 			}
 			logs.value = logData;
 		} catch (error) {
@@ -185,6 +196,60 @@
 			color: '#606266' 
 		}
 	}
+
+	// 查看最后一帧截图
+	const seeImg = (img_path) => {
+		// 显示图片弹窗
+		read("block\\"+img_path).then(res => {
+			imgSrc.value = res;
+			imageVisiable.value = true;
+		}).catch(err => {
+			ElMessage.error(err);
+		});
+	}
+
+	const deleteImg = async (img_path, id) => {
+		let error = "";
+
+		try {
+			await ElMessageBox.confirm('将删除这张照片，此操作不可逆', '注意', {
+				confirmButtonText: '确定删除',
+				cancelButtonText: '取消',
+				type: 'warning'
+			})
+		} catch (err) {
+			error = err;
+		}
+
+		if(error != ''){
+			// 点了取消，退出
+			return;
+		}
+
+		// 没点取消继续执行
+		try {
+			await reomve("block\\"+img_path);
+		} catch (err) {
+			error = error;
+		}
+
+		if(error != "" && !error.includes("系统找不到指定的文件")){
+			ElMessage.error(`删除图片失败：${error}`);
+			return;
+		}
+
+		// 删除数据库
+		deleteBlockImage(id).then(()=>{
+			const item = filteredLogs.value.find(item => item.id == id);
+			if(item){
+				item.blockImg = null;
+				item.content = '登录失败';
+			}
+			ElMessage.success("删除成功");
+		}).catch((error) => {
+			ElMessage.error(error);
+		})
+	}
 </script>
     
 <template>
@@ -195,6 +260,7 @@
 					<el-radio-button label="登录日志" value="unlock" />
 					<el-radio-button label="程序日志" value="soft" />
 					<el-radio-button label="DLL日志" value="dll" />
+					<el-radio-button label="服务日志" value="service" />
 				</el-radio-group>
 				<div class="filter-right">
 					<el-select v-model="filterLevel" placeholder="日志级别" style="width: 240px; margin-right: 10px;">
@@ -236,7 +302,14 @@
 
 					<el-table-column prop="content" label="详情内容">
 						<template #default="{ row }">
-							<code class="content-code">{{ row.content }}</code>
+							<code class="content-code">
+								{{ row.content }}
+								<template v-if="row.blockImg">
+									<el-button type="primary" size="small" @click="seeImg(row.blockImg)">查看图片</el-button>
+									<!-- 删除图片 -->
+									<el-button type="danger" size="small" @click="deleteImg(row.blockImg, row.id)">删除图片</el-button>
+								</template>
+							</code>
 						</template>
 					</el-table-column>
 				</el-table>
@@ -257,6 +330,11 @@
 				</el-pagination>
 			</div>
 		</div>
+		
+		<!-- 图片弹窗 -->
+		<el-dialog v-model="imageVisiable" title="查看截图" width="800" style="text-align: center;" @closed="imgSrc = ''">
+			<el-image :src="imgSrc" style="max-width: 100%; max-height: 100%;"/>
+		</el-dialog>
 	</div>
 </template>
     

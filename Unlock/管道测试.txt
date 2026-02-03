@@ -1,0 +1,16 @@
+$pipeName = "\\.\pipe\MansonWindowsUnlockRustUnlock"
+$user = "exit"
+$userBytes = [System.Text.Encoding]::Unicode.GetBytes($user)
+try {
+    $pipe = New-Object System.IO.Pipes.NamedPipeClientStream(".", "MansonWindowsUnlockRustUnlock", [System.IO.Pipes.PipeDirection]::Out)
+    Write-Host "正在连接管道.."
+    $pipe.Connect(5000) # 等待 5 秒
+    
+    Write-Host "发送数据..."
+    $pipe.Write($userBytes, 0, $userBytes.Length)
+    
+    $pipe.Close()
+    Write-Host "发送成功！"
+} catch {
+    Write-Error "连接失败，请确保 DLL 已加载且线程已启动。"
+}

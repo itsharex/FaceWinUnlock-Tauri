@@ -56,15 +56,6 @@ impl SampleProvider {
 /// 实现Drop trait，在对象销毁时减少引用计数
 impl Drop for SampleProvider {
     fn drop(&mut self) {
-        // 准备安全停止监听线程
-        let mut inner = self.inner.lock().unwrap();
-        if let Some(listener) = inner.listener.take() {
-            let mut listener = listener.lock().unwrap();
-            listener.stop_and_join();
-        }
-
-        inner.listener = None;
-
         info!("SampleProvider::drop - 销毁凭据提供程序实例");
         dll_release(); // 减少DLL引用计数
     }
@@ -112,6 +103,16 @@ impl ICredentialProvider_Impl for SampleProvider_Impl {
         let mut inner = self.inner.lock().unwrap();
         inner.events = None; // 清除事件接口
         inner.advise_context = 0; // 重置上下文ID
+
+        // 2026-01-23 无意中发现,在锁屏界面黑屏后,Windows会调用UnAdvise
+        // 这会导致管道监听线程无法正常停止,从而导致内存泄漏
+        // 因此,在取消事件通知时,我们需要停止并清理管道监听线程
+        // 停止并清理管道监听线程
+        if let Some(listener) = inner.listener.take() {
+            let mut listener = listener.lock().unwrap();
+            listener.stop_and_join();
+        }
+        inner.listener = None;
         Ok(())
     }
 
@@ -211,13 +212,13 @@ impl ICredentialProvider_Impl for SampleProvider_Impl {
         info!("SampleProvider::GetCredentialAt - 获取凭据，索引: {}", dwindex);
         if dwindex == 0 {
             let mut inner = self.inner.lock().unwrap();
-            if let Some(old_cred) = inner.credential.take() {
-                info!("SampleProvider::GetCredentialAt - 销毁已存在的旧凭据实例");
-                drop(old_cred);
-                dll_release();
+            if let Some(ref credential) = inner.credential {
+                info!("SampleProvider::GetCredentialAt - 复用已存在的凭据实例");
+                return Ok(credential.clone());
             }
+
             // 创建凭据实例并转换为接口返回，并传递收到的用户名和密码
-            info!("SampleProvider::GetCredentialAt - 创建新的凭据实例");
+            info!("SampleProvider::GetCredentialAt - 首次创建凭据实例");
             let cred = SampleCredential::new(inner.shared_creds.clone(), inner.auth_package_id);
             let cred_interface: ICredentialProviderCredential = cred.into();
             inner.credential = Some(cred_interface.clone());

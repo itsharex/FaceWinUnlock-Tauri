@@ -1,6 +1,6 @@
 <script setup lang="ts">
     import { reactive, ref, onMounted, computed, onUnmounted } from 'vue';
-    import { ElMessage, ElMessageBox } from 'element-plus';
+    import { ElMessage, ElMessageBox, ElLoading } from 'element-plus';
     import AccountAuthForm from '../../components/AccountAuthForm.vue';
     import { open } from '@tauri-apps/plugin-dialog';
     import { invoke } from '@tauri-apps/api/core';
@@ -31,6 +31,7 @@
     // 一致性验证模式下的图片
     const verifyingStreamImage = ref('');
     const matchConfidence = ref(0);
+    const verifyMessage = ref("");
     const isProcessing = ref(false);
     // 修改时的面容数据，用于最后提交的判断
     let editFaceData = null;
@@ -48,6 +49,15 @@
     const targetId = route.query.id;
 
     onMounted(async () => {
+        const loadingInstance = ElLoading.service({ fullscreen: true })
+        try {
+            await invoke('load_opencv_model');
+        } catch (error) {
+            loadingInstance.close();
+            ElMessage.error(formatObjectString("加载OpenCV模型失败：", error));
+            router.push('/faces');
+        }
+        loadingInstance.close();
         if (isEditMode.value) {
             editFaceData = facesStore.getFaceById(targetId);
             if(editFaceData){
@@ -81,10 +91,16 @@
 
     onUnmounted(async ()=>{
         await stopCamera();
+        try {
+            await invoke('unload_model');
+        } catch (error) {
+            ElMessage.error(formatObjectString("卸载模型失败：", error));
+        }
     })
 
     const handleSelectFile = async () => {
         try {
+            localStorage.setItem("proactiveOutOfFocus", "true");
             const selected = await open({
                 multiple: false,
                 directory: false,
@@ -104,6 +120,7 @@
             ElMessage.error(info);
         } finally {
             isProcessing.value = false;
+            localStorage.setItem("proactiveOutOfFocus", "false");
         }
     };
 
@@ -143,28 +160,37 @@
                 rawImageForSystem = res.data.raw_base64;
             } else {
                 // 一致性对比
-                const res = await invoke('verify_face', { referenceBase64: rawImageForSystem.split(',')[1], faceDetectionThreshold: getFaceDetectionThresholdValue() });
+                const res = await invoke('verify_face', { 
+                    referenceBase64: rawImageForSystem.split(',')[1], 
+                    faceDetectionThreshold: getFaceDetectionThresholdValue(),
+                    livenessEnabled: optionsStore.getOptionValueByKey('livenessEnabled') ? (optionsStore.getOptionValueByKey('livenessEnabled') == 'false' ? false : true) : false,
+                    livenessThreshold: parseFloat(optionsStore.getOptionValueByKey('livenessThreshold')) || 0.50,
+                });
                 if(res.data.display_base64) {
                     verifyingStreamImage.value = res.data.display_base64;
                 }
 
-                const rawScore = res.data.score;
-                if (rawScore > 0) {
-                    matchConfidence.value = Math.floor(Math.min(100, (rawScore / 1.0) * 100));
-                } else {
+                const isSuccess = res.data.success;
+                if(!isSuccess){
                     matchConfidence.value = 0;
+                    verifyMessage.value = res.data.message || "验证失败";
+                }else{
+                    const rawScore = res.data.score;
+                    if (rawScore > 0) {
+                        matchConfidence.value = Math.floor(Math.min(100, (rawScore / 1.0) * 100));
+                    } else {
+                        matchConfidence.value = 0;
+                    }
                 }
             }
+
+            // 暂停100ms
+            await new Promise(resolve => setTimeout(resolve, 100));
 
             // 继续下一帧
             requestAnimationFrame(streamLoop);
         } catch (error) {
             const info = formatObjectString("RAF循环出错：" ,error);
-            if(info.includes("未检测到人脸")){
-                // 这个可以继续，并且不用显示错误
-                requestAnimationFrame(streamLoop);
-                return;
-            }
             errorLog(info);
             ElMessage.error(info);
         }
@@ -381,7 +407,14 @@
                             </div>
                             <img v-else :src="verifyingStreamImage" class="result-img" />
                             <div class="confidence-tag" :class="matchConfidence > (threshold) ? 'match' : 'mismatch'">
-                                相似度: {{ matchConfidence }}%
+                                <template v-if="matchConfidence > 0">
+                                    <span v-if="matchConfidence > (threshold)">匹配成功</span>
+                                    <span v-else>匹配失败</span>
+                                    ：置信度 {{ matchConfidence }}%
+                                </template>
+                                <template v-else>
+                                    {{ verifyMessage }}
+                                </template>
                             </div>
                         </div>
                     </div>

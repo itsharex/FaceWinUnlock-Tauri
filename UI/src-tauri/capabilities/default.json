@@ -22,12 +22,16 @@
       "identifier": "fs:allow-exists",
       "allow": [
         { "path": "$RESOURCE/faces/**" },
-        { "path": "$RESOURCE/logs/**" }
+        { "path": "$RESOURCE/logs/**" },
+        { "path": "$RESOURCE/block/**" }
       ]
     },
     {
       "identifier": "fs:allow-read-file",
-      "allow": [{ "path": "$RESOURCE/faces/**" }]
+      "allow": [
+        { "path": "$RESOURCE/faces/**" },
+        { "path": "$RESOURCE/block/**" }
+      ]
     },
     {
       "identifier": "fs:allow-read-text-file",
@@ -35,7 +39,10 @@
     },
     {
       "identifier": "fs:allow-remove",
-      "allow": [{ "path": "$RESOURCE/faces/**" }]
+      "allow": [
+        { "path": "$RESOURCE/faces/**" },
+        { "path": "$RESOURCE/block/**" }
+      ]
     }
   ]
 }

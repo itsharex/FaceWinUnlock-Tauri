@@ -1,7 +1,7 @@
 use crate::modules::options::{write_to_registry, RegistryItem};
+use crate::utils::api::{add_scheduled_task, check_process_running, check_scheduled_task, delete_process_running, disable_scheduled_task};
 use crate::{
     utils::{
-        api::{check_global_autostart, disable_global_autostart},
         custom_result::CustomResult,
     },
     ROOT_DIR,
@@ -184,6 +184,18 @@ pub fn deploy_core_components() -> Result<CustomResult, CustomResult> {
         }
     ])?;
 
+    let mut is_run = true;
+    if let Ok(_) = check_process_running() {
+        // 如果正在运行
+        is_run = false;
+    }
+    
+    // 写入计划任务
+    add_scheduled_task("FaceWinUnlock-Server.exe".to_string(), "FaceWinUnlockServer".to_string(), true, false, true, is_run)?;
+
+    // 写入配置，刚初始化完成，不能让Winlogon连接管道
+    write_to_registry(vec![RegistryItem {key:  String::from("CONNECT_TO_PIPE"), value: String::from("0")}])?;
+
     Ok(CustomResult::success(None, None))
 }
 
@@ -215,11 +227,22 @@ pub fn uninstall_init() -> Result<CustomResult, CustomResult> {
         .map_err(|e| CustomResult::error(Some(format!("删除注册表项(DLL)失败: {}", e)), None))?;
 
     // 清除自启动
-    let result = check_global_autostart()?;
+    let result = check_scheduled_task("FaceWinUnlockAutoStart".to_string())?;
     if *result.data.get("enable").unwrap() == json!(true) {
-        disable_global_autostart()?;
+        disable_scheduled_task("FaceWinUnlockAutoStart".to_string())?;
     }
 
+    // 清除Server自启动
+    let result = check_scheduled_task("FaceWinUnlockServer".to_string())?;
+    if *result.data.get("enable").unwrap() == json!(true) {
+        disable_scheduled_task("FaceWinUnlockServer".to_string())?;
+    }
+
+    if let Ok(_) = check_process_running() {
+        // 关闭server
+        delete_process_running()?;
+    }
+    
     // 删除dll文件
     let dll_name = "FaceWinUnlock-Tauri.dll";
     let target_path = format!("C:\\Windows\\System32\\{}", dll_name);

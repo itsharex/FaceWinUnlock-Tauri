@@ -65,7 +65,7 @@
                         </el-tooltip>
                     </div>
                 </template>
-                <el-input v-model="formData.password" type="password" show-password placeholder="请输入对应的账户密码，不支持Pin" />
+                <el-input v-model="formData.password" type="password" show-password placeholder="请输入对应的登录密码" />
             </el-form-item>
 
             <div class="auth-tips" v-if="!small">

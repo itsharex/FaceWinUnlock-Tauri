@@ -29,7 +29,6 @@ use CSampleProvider::SampleProvider;
 // 全局引用计数器，用于管理DLL的生命周期
 // 当引用计数为0时，系统可以安全卸载DLL
 static G_REF_COUNT: AtomicI32 = AtomicI32::new(0);
-
 /// 增加DLL的引用计数
 pub fn dll_add_ref() {
     let new_count = G_REF_COUNT.fetch_add(1, Ordering::SeqCst) + 1;

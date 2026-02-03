@@ -1,9 +1,7 @@
 use std::{
     env,
     path::{Path, PathBuf},
-    sync::{
-        atomic::{AtomicBool, AtomicI32}, Arc, Mutex
-    },
+    sync::{Arc, Mutex},
 };
 // Learn more about Tauri commands at https://tauri.app/develop/calling-rust/
 use tauri::{tray::TrayIcon, Manager, Wry};
@@ -31,15 +29,13 @@ use opencv::{
 use proc::wnd_proc_subclass;
 use tauri_plugin_log::{Target, TargetKind};
 use utils::api::{
-    check_global_autostart, disable_global_autostart, enable_global_autostart, get_camera,
-    get_now_username, init_model, open_camera, open_directory, stop_camera, test_win_logon,
-    close_app
+    add_scheduled_task, check_process_running, check_scheduled_task, close_app,
+    delete_process_running, disable_scheduled_task, get_camera, get_now_username, init_model,
+    load_opencv_model, open_camera, open_directory, stop_camera, test_win_logon, unload_model, get_uuid_v4, get_cache_dir, run_scheduled_task,
+    check_trigger_via_xml
 };
 mod tray;
 use tray::create_system_tray;
-
-use r2d2::Pool;
-use r2d2_sqlite::SqliteConnectionManager;
 
 pub struct OpenCVResource<T> {
     pub inner: T,
@@ -50,26 +46,19 @@ unsafe impl<T> Sync for OpenCVResource<T> {}
 pub struct AppState {
     pub detector: Option<OpenCVResource<Ptr<FaceDetectorYN>>>,
     pub recognizer: Option<OpenCVResource<Ptr<FaceRecognizerSF>>>,
+    pub liveness: Option<OpenCVResource<opencv::dnn::Net>>,
     pub camera: Option<OpenCVResource<VideoCapture>>,
 }
 
-// 是否退出线程
-static IS_BREAK_THREAD: AtomicBool = AtomicBool::new(true);
-// 是否正在运行面容识别？
-static IS_RUN: AtomicBool = AtomicBool::new(false);
-// 多长时间进行重试？
-static RETRY_DELAY: AtomicI32 = AtomicI32::new(10000);
-
-// 定义全局只读连接池，用来在解锁中对数据库读操作
 lazy_static::lazy_static! {
     // 系统托盘
     static ref GLOBAL_TRAY: Mutex<Option<Arc<TrayIcon<Wry>>>> = Mutex::new(None);
     static ref TRAY_IS_READY: Mutex<bool> = Mutex::new(false);
-    static ref DB_POOL: Mutex<Option<Pool<SqliteConnectionManager>>> = Mutex::new(None);
     // 不在使用状态管理，因为proc获取不到
     static ref APP_STATE: Mutex<AppState> = Mutex::new(AppState {
         detector: None,
         recognizer: None,
+        liveness: None,
         camera: None,
     });
 
@@ -91,15 +80,6 @@ lazy_static::lazy_static! {
     };
 }
 
-// 计时器，确定何时调用面容识别代码
-static IS_LOCKED: AtomicBool = AtomicBool::new(false);
-const TIMER_ID_LOCK_CHECK: usize = 1001;
-
-// 全局摄像头索引
-static CAMERA_INDEX: AtomicI32 = AtomicI32::new(0);
-// 面容不匹配时，当前的尝试次数
-static MATCH_FAIL_COUNT: AtomicI32 = AtomicI32::new(0);
-
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     // 获取软件安装目录，用于将日志放到软件安装目录下
@@ -110,9 +90,7 @@ pub fn run() {
     {
         builder = builder
             .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
-                let main = app
-                    .get_webview_window("main")
-                    .expect("no main window");
+                let main = app.get_webview_window("main").expect("no main window");
                 if !main.is_visible().unwrap() {
                     main.show().unwrap();
                 }
@@ -169,14 +147,13 @@ pub fn run() {
                 }
 
                 let args: Vec<String> = env::args().collect();
-                let is_silent = args.iter().any(|arg| arg == "-s" || arg == "--silent" || arg == "--s");
+                let is_silent = args
+                    .iter()
+                    .any(|arg| arg == "-s" || arg == "--silent" || arg == "--s");
                 if !is_silent {
                     // 只有不是静默启动时才显示
                     window.show().unwrap();
                 }
-
-                // 添加一个线程，用于创建管道
-
                 Ok(())
             })
             .on_window_event(|window, event| {
@@ -211,10 +188,18 @@ pub fn run() {
                 stop_camera,
                 get_camera,
                 open_directory,
-                enable_global_autostart,
-                disable_global_autostart,
-                check_global_autostart,
-                close_app
+                close_app,
+                check_process_running,
+                delete_process_running,
+                load_opencv_model,
+                add_scheduled_task,
+                disable_scheduled_task,
+                check_scheduled_task,
+                unload_model,
+                get_uuid_v4,
+                get_cache_dir,
+                run_scheduled_task,
+                check_trigger_via_xml
             ]);
     }
     builder
