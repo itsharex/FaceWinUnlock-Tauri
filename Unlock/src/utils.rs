@@ -1,16 +1,14 @@
 use std::{ffi::OsStr, fs, os::windows::ffi::OsStrExt, sync::atomic::Ordering, time::{SystemTime, UNIX_EPOCH}};
 
-use log::info;
+use log::{info, warn};
 use opencv::{core::{Mat, Vector}, imgcodecs::imencode};
 use windows::{
-    Win32::{
+    core::{Error, PCWSTR, PWSTR}, Win32::{
         Foundation::E_UNEXPECTED,
-        System::Registry::{
-            HKEY, HKEY_LOCAL_MACHINE, KEY_READ, REG_SZ, REG_VALUE_TYPE, RegCloseKey, RegOpenKeyExW,
-            RegQueryValueExW,
-        },
-    },
-    core::{Error, PCWSTR},
+        System::{Registry::{
+            RegCloseKey, RegOpenKeyExW, RegQueryValueExW, HKEY, HKEY_LOCAL_MACHINE, KEY_READ, REG_SZ, REG_VALUE_TYPE
+        }, RemoteDesktop::{WTSFreeMemory, WTSGetActiveConsoleSessionId, WTSQuerySessionInformationW, WTSSessionInfoEx, WTSINFOEXW}},
+    }
 };
 
 use crate::global::RETRY_DELAY;
@@ -165,4 +163,49 @@ pub fn save_mat_as_faceimg(mat: &Mat, path: &str) -> Result<(), String> {
 
     info!("图片保存成功");
     Ok(())
+}
+
+
+/// 判断系统是否处于锁屏状态
+/// 参考自：https://blog.csdn.net/FlushHip/article/details/83141062
+pub fn is_locked() -> bool {
+    // 获取活动控制台会话ID
+    let session_id = unsafe { WTSGetActiveConsoleSessionId() };
+    if session_id == 0xFFFFFFFF {
+        info!("当前无活动控制台会话，视为未锁屏");
+        return false; // 无活动控制台会话，视为未锁屏
+    }
+
+    // 调用内置的WTSQuerySessionInformationW查询会话扩展信息
+    let mut pp_buffer: PWSTR = PWSTR::null();
+    let mut dw_bytes_returned = 0;
+    let success = unsafe { WTSQuerySessionInformationW(
+        None,
+        session_id,
+        WTSSessionInfoEx,
+        &mut pp_buffer,
+        &mut dw_bytes_returned,
+    ) };
+
+    if success.is_err() || pp_buffer.is_null() || dw_bytes_returned == 0 {
+        warn!("查询失败：success {} {:?}", success.is_err(), success.err());
+        warn!("查询失败：pp_buffer {}", pp_buffer.is_null());
+        warn!("查询失败：dw_bytes_returned {}", dw_bytes_returned);
+        return false; // 查询失败，保守返回未锁屏
+    }
+
+    // 解析会话状态
+    let p_info = pp_buffer.0 as *mut WTSINFOEXW;
+    let mut is_locked = false;
+    if (unsafe { *p_info }).Level == 1 {
+        let session_flags = unsafe { (*p_info).Data.WTSInfoExLevel1.SessionFlags };
+        // 0 是锁定状态 WTS_SESSIONSTATE_LOCK
+        // 1 是非锁定状态 WTS_SESSIONSTATE_UNLOCK
+        is_locked = session_flags == 0;
+    }
+
+    // 释放内存
+    unsafe { WTSFreeMemory(pp_buffer.0 as _) };
+    
+    is_locked
 }

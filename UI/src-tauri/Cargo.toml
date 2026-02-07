@@ -52,6 +52,7 @@ version = "0.62.2"
 features = [
     "Win32_Foundation",
     "Win32_Security",
+    "Win32_Security_Authorization",
     "Win32_Media_DirectShow",
     "Win32_Media_MediaFoundation",
     "Win32_System_IO",

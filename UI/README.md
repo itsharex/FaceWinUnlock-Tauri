@@ -61,7 +61,7 @@ npm run tauri build
 - [FaceWinUnlock-Server.exe](/Unlock)，编译后得到exe
 - [face_detection_yunet_2023mar.onnx](https://github.com/opencv/opencv_zoo/blob/main/models/face_detection_yunet/face_detection_yunet_2023mar.onnx)
 - [face_recognition_sface_2021dec.onnx](https://github.com/opencv/opencv_zoo/blob/main/models/face_recognition_sface/face_recognition_sface_2021dec.onnx)
-- [detect.onnx](https://modelscope.cn/models/iic/cv_manual_face-liveness_flrgb/summary)
+- [detect.onnx](https://github.com/suriAI/face-antispoof-onnx)
 - [opencv_world4120.dll](https://github.com/opencv/opencv/releases/tag/4.12.0)，需要下载opencv源代码进行编译，[编译教程点这](https://www.cnblogs.com/-CO-/p/18075315)
 
 ## 📂 项目结构

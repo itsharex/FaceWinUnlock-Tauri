@@ -2,7 +2,7 @@ use std::{io::Read, path::PathBuf, sync::atomic::Ordering, thread::sleep, time::
 
 use log::{error, info, warn};
 use opencv::{
-    core::{Mat, MatTraitConst, MatTraitConstManual, Ptr, Scalar, Size, Vector}, dnn::NetTrait, objdetect::{FaceDetectorYN, FaceRecognizerSF, FaceRecognizerSF_DisType}, prelude::{FaceDetectorYNTrait, FaceRecognizerSFTrait, FaceRecognizerSFTraitConst}, videoio::{self, VideoCapture, VideoCaptureTrait, VideoCaptureTraitConst}
+    core::{Mat, MatTraitConst, MatTraitConstManual, Ptr, Scalar, Size, Vector}, dnn::{NetTrait, NetTraitConst}, objdetect::{FaceDetectorYN, FaceRecognizerSF, FaceRecognizerSF_DisType}, prelude::{FaceDetectorYNTrait, FaceRecognizerSFTrait, FaceRecognizerSFTraitConst}, videoio::{self, VideoCapture, VideoCaptureTrait, VideoCaptureTraitConst}
 };
 use serde::{Deserialize, Serialize};
 use windows::{core::HSTRING, Win32::Foundation::E_UNEXPECTED};
@@ -360,41 +360,30 @@ fn run(mut camera: VideoCapture) -> Result<bool, String> {
             // 如果启用了活体检测，进行活体检测
             if LIVENESS_ENABLE.load(Ordering::SeqCst) {
                 // 图像预处理
-                // blob_from_image 自动完成: 缩放、中心裁剪、BGR转RGB、归一化
                 let blob = opencv::dnn::blob_from_image(
-                    &aligned,
-                    2.0 / 255.0,              // 缩放比例 (1/127.5)
-                    Size::new(112, 112), // 尺寸
-                    Scalar::new(127.5, 127.5, 127.5, 0.0), // 减去均值
-                    true,                     // swapRB: BGR -> RGB
-                    false,                    // crop
-                    opencv::core::CV_32F      // ddepth
+                    &aligned, 1.0, Size::new(128, 128), 
+                    Scalar::new(0.0, 0.0, 0.0, 0.0), true, false, opencv::core::CV_32F
                 ).map_err(|e| format!("创建 Blob 失败: {:?}", e))?;
-
-                // 执行活体检测推理
                 liveness_net.set_input(&blob, "", 1.0, Scalar::default()).map_err(|e| format!("设置输入失败: {:?}", e))?;
-                let mut outputs = Vector::<Mat>::new();
-                liveness_net.forward(&mut outputs, &Vector::from_iter(vec![""]))
-                    .map_err(|e| format!("执行推理失败: {:?}", e))?;
+                let out_layer_names = liveness_net.get_unconnected_out_layers_names().map_err(|e| format!("获取输出层失败: {:?}", e))?;
+                let mut output_blobs = Vector::<Mat>::new();
+                liveness_net.forward(&mut output_blobs, &out_layer_names).map_err(|e| format!("执行推理失败: {:?}", e))?; 
 
-                let output_mat = outputs.get(0).map_err(|_| format!("无输出"))?;
-                let data: &[f32] = output_mat.data_typed().map_err(|e| format!("获取数据失败: {:?}", e))?;
+                let mut is_real = false;
+                let mut real_score = 0.0;
 
-                let mut is_live = false;
-                let mut real_prob = 0.0;
-                
-                if data.len() >= 2 {
-                    real_prob = data[1];
-                    is_live = real_prob >= LIVENESS_THRESHOLD.load(Ordering::SeqCst) as f32 / 100.0;            
-                } else {
-                    let score = data[0];
-                    real_prob = 1.0 - score;
-                    is_live = real_prob >= LIVENESS_THRESHOLD.load(Ordering::SeqCst) as f32 / 100.0;
+                if !output_blobs.is_empty() {
+                    let output = output_blobs.get(0).map_err(|_| format!("无输出"))?;
+                    
+                    // 输出是 [1, 3] 的矩阵
+                    let scores = output.at_row::<f32>(0).map_err(|e| format!("获取输出行失败: {:?}", e))?;
+                    real_score = scores[0] / 100.0;
+                    is_real = real_score > LIVENESS_THRESHOLD.load(Ordering::SeqCst) as f32 / 100.0; // 置信度阈值
                 }
 
-                if !is_live {
+                if !is_real {
                     // 活体检测失败，可以直接退出外层循环，因为在往下匹配面容，也是失败的
-                    error!("活体检测失败，真实概率: {:.2}%", real_prob * 100.0);
+                    error!("活体检测失败，真实概率: {:.2}%", real_score * 100.0);
                     break 'face;
                 }
             }
@@ -499,9 +488,9 @@ fn open_camera(backend: Option<CameraBackend>, camear_index: i32) -> Result<Vide
             Ok(cam) => {
                 // 成功打开
                 let msg = if backend.is_some() {
-                    format!("使用指定后端 {:?} 成功打开摄像头", backend)
+                    format!("使用指定后端 {:?} 成功打开摄像头，索引: {}", backend, camear_index)
                 } else {
-                    format!("尝试第{}个后端 {:?} 成功打开摄像头", idx + 1, backend)
+                    format!("尝试第{}个后端 {:?} 成功打开摄像头，索引: {}", idx + 1, backend, camear_index)
                 };
                 info!("{}", msg);
                 return Ok(cam);
