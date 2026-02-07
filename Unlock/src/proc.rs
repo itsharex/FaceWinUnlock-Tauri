@@ -17,6 +17,35 @@ use windows::
 
 use crate::{face::{prepare_before, run_before}, global::{get_face_recognition_mode, ALLOW_UNLOCK, FACE_RECOG_DELAY, IS_RUN, MATCH_FAIL_COUNT, TIMER_ID_LOCK_CHECK}};
 
+pub fn lock(hwnd: HWND){
+    MATCH_FAIL_COUNT.store(0, Ordering::SeqCst);
+    match prepare_before() {
+        Ok(_) => {
+            ALLOW_UNLOCK.store(true, Ordering::SeqCst);
+            if get_face_recognition_mode() != "operation" { 
+                // 如果是按延迟时间，这里启动定时器
+                IS_RUN.store(true, Ordering::SeqCst);
+                // 设置一个定时器
+                // 当时间到达时，系统会发送 WM_TIMER 消息
+                let time_ms = FACE_RECOG_DELAY.load(Ordering::SeqCst);
+                unsafe {
+                    SetTimer(
+                        Some(hwnd),
+                        TIMER_ID_LOCK_CHECK,
+                        time_ms,
+                        None,
+                    )
+                };
+
+                info!("计时器已设置 {}", time_ms);
+            }
+        },
+        Err(e) => {
+            error!("准备工作失败：{}", e);
+        }
+    }
+}
+
 // 窗口过程函数
 pub unsafe extern "system" fn window_proc(
     hwnd: HWND,
@@ -31,32 +60,7 @@ pub unsafe extern "system" fn window_proc(
 
             match event_type {
                 WTS_SESSION_LOCK => {
-                    MATCH_FAIL_COUNT.store(0, Ordering::SeqCst);
-                    match prepare_before() {
-                        Ok(_) => {
-                            ALLOW_UNLOCK.store(true, Ordering::SeqCst);
-                            if get_face_recognition_mode() != "operation" { 
-                                // 如果是按延迟时间，这里启动定时器
-                                IS_RUN.store(true, Ordering::SeqCst);
-                                // 设置一个定时器
-                                // 当时间到达时，系统会发送 WM_TIMER 消息
-                                let time_ms = FACE_RECOG_DELAY.load(Ordering::SeqCst);
-                                unsafe {
-                                    SetTimer(
-                                        Some(hwnd),
-                                        TIMER_ID_LOCK_CHECK,
-                                        time_ms,
-                                        None,
-                                    )
-                                };
-
-                                info!("计时器已设置 {}", time_ms);
-                            }
-                        },
-                        Err(e) => {
-                            error!("准备工作失败：{}", e);
-                        }
-                    }
+                    lock(hwnd);
                 }
                 WTS_SESSION_UNLOCK => {
                     ALLOW_UNLOCK.store(false, Ordering::SeqCst);

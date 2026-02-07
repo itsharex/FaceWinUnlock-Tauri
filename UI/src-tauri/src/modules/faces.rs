@@ -157,45 +157,34 @@ pub async fn verify_face(
         let liveness_net = &mut app_state.liveness.as_mut().unwrap().inner;
 
         // 图像预处理
-        // blob_from_image 自动完成: 缩放、中心裁剪、BGR转RGB、归一化
         let blob = opencv::dnn::blob_from_image(
-            &cur_aligned,
-            2.0 / 255.0,              // 缩放比例 (1/127.5)
-            Size::new(112, 112), // 尺寸
-            Scalar::new(127.5, 127.5, 127.5, 0.0), // 减去均值
-            true,                     // swapRB: BGR -> RGB
-            false,                    // crop
-            opencv::core::CV_32F      // ddepth
+            &cur_aligned, 1.0, Size::new(128, 128), 
+            Scalar::new(0.0, 0.0, 0.0, 0.0), true, false, opencv::core::CV_32F
         ).map_err(|e| CustomResult::error(Some(format!("创建 Blob 失败: {:?}", e)), None))?;
-
-        // 执行活体检测推理
         liveness_net.set_input(&blob, "", 1.0, Scalar::default()).map_err(|e| CustomResult::error(Some(format!("设置输入失败: {:?}", e)), None))?;
-        let mut outputs = Vector::<Mat>::new();
-        liveness_net.forward(&mut outputs, &Vector::from_iter(vec![""]))
-            .map_err(|e| CustomResult::error(Some(format!("执行推理失败: {:?}", e)), None))?;
+        let out_layer_names = liveness_net.get_unconnected_out_layers_names().map_err(|e| CustomResult::error(Some(format!("获取输出层失败: {:?}", e)), None))?;
+        let mut output_blobs = Vector::<Mat>::new();
+        liveness_net.forward(&mut output_blobs, &out_layer_names).map_err(|e| CustomResult::error(Some(format!("执行推理失败: {:?}", e)), None))?; 
 
-        let output_mat = outputs.get(0).map_err(|_| CustomResult::error(Some(String::from("无输出")), None))?;
-        let data: &[f32] = output_mat.data_typed().map_err(|e| CustomResult::error(Some(format!("获取数据失败: {:?}", e)), None))?;
+        let mut is_real = false;
+        let mut real_score = 0.0;
 
-        let mut is_live = false;
-        let mut real_prob = 0.0;
-        
-        if data.len() >= 2 {
-            real_prob = data[1];
-            is_live = real_prob >= liveness_threshold;            
-        } else {
-            let score = data[0];
-            real_prob = 1.0 - score;
-            is_live = real_prob >= liveness_threshold;
+        if !output_blobs.is_empty() {
+            let output = output_blobs.get(0).map_err(|_| CustomResult::error(Some(String::from("无输出")), None))?;
+            
+            // 输出是 [1, 3] 的矩阵
+            let scores = output.at_row::<f32>(0).map_err(|e| CustomResult::error(Some(format!("获取输出行失败: {:?}", e)), None))?;
+            real_score = scores[0] / 100.0;
+            is_real = real_score > liveness_threshold; // 置信度阈值
         }
-
-        if !is_live {
+        
+        if !is_real {
             return Ok(CustomResult::success(
                 None,
                 Some(json!(
                     {
                         "success": false,
-                        "message": format!("活体检测未通过，概率 {:.2}%", real_prob * 100.0),
+                        "message": format!("活体检测未通过，概率 {:.2}%", real_score * 100.0),
                         "score": 0,
                         "display_base64": mat_to_base64(&resized_mat_v)
                     }

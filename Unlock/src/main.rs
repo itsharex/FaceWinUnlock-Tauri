@@ -21,6 +21,8 @@ use windows::{
     }
 };
 
+use crate::{proc::lock, utils::is_locked};
+
 pub mod global;
 pub mod utils;
 pub mod proc;
@@ -131,6 +133,13 @@ fn main() -> windows::core::Result<()> {
     let hwnd = create_message_window()?;
     set_global_hwnd(hwnd);
     info!("消息窗口创建成功");
+
+    // 判断是否是锁屏状态，准备面容解锁
+    // 2026-02-03 由抖音 @mingliang71481 提出并配合修复
+    if is_locked() {
+        info!("系统处于锁屏状态，准备面容解锁");
+        lock(hwnd);
+    }
 
     // 消息循环
     let mut msg = MSG::default();
