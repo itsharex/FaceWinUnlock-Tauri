@@ -2,13 +2,13 @@ use std::{io::Read, path::PathBuf, sync::atomic::Ordering, thread::sleep, time::
 
 use log::{error, info, warn};
 use opencv::{
-    core::{Mat, MatTraitConst, MatTraitConstManual, Ptr, Scalar, Size, Vector}, dnn::{NetTrait, NetTraitConst}, objdetect::{FaceDetectorYN, FaceRecognizerSF, FaceRecognizerSF_DisType}, prelude::{FaceDetectorYNTrait, FaceRecognizerSFTrait, FaceRecognizerSFTraitConst}, videoio::{self, VideoCapture, VideoCaptureTrait, VideoCaptureTraitConst}
+    core::{Mat, MatTrait, MatTraitConst, MatTraitConstManual, Point2f, Ptr, Scalar, Size, Vector}, dnn::{NetTrait, NetTraitConst}, imgproc, objdetect::{FaceDetectorYN, FaceRecognizerSF, FaceRecognizerSF_DisType}, prelude::{FaceDetectorYNTrait, FaceRecognizerSFTrait, FaceRecognizerSFTraitConst}, videoio::{self, VideoCapture, VideoCaptureTrait, VideoCaptureTraitConst}
 };
 use serde::{Deserialize, Serialize};
 use windows::{core::HSTRING, Win32::Foundation::E_UNEXPECTED};
 
 use crate::{global::{
-    get_global_log_path, set_face_recognition_mode, CAMERA_INDEX, DB_POOL, FACE_RECOG_DELAY, IS_RUN, LIVENESS_ENABLE, LIVENESS_THRESHOLD, MATCH_FAIL_COUNT, MAX_FAIL, MAX_SUCCESS, RETRY_DELAY
+    get_face_aligned_mode, get_global_log_path, set_face_aligned_mode, set_face_recognition_mode, CAMERA_INDEX, DB_POOL, FACE_RECOG_DELAY, IS_RUN, LIVENESS_ENABLE, LIVENESS_THRESHOLD, MATCH_FAIL_COUNT, MAX_FAIL, MAX_SUCCESS, NOT_FACE_DELAY, RETRY_DELAY
 }, pipe::Client, utils::{save_mat_as_faceimg, set_last_send_time}};
 
 // 定义摄像头后端类型枚举
@@ -156,6 +156,16 @@ pub fn prepare_before() -> Result<(), String> {
 
         CAMERA_INDEX.store(camera_index.parse().unwrap_or(0), Ordering::SeqCst);
 
+        // 获取未检测到人脸时多少秒停止面容识别
+        let time = conn
+            .query_row(
+                "SELECT val FROM options WHERE key = 'notFaceDelay';",
+                [],
+                |row| row.get::<&str, String>("val"),
+            )
+            .unwrap_or(String::from("3"));
+        NOT_FACE_DELAY.store((time.parse().unwrap_or(3)) * 2, Ordering::SeqCst);
+
         // 获取重试时间
         let time = conn
             .query_row(
@@ -191,6 +201,16 @@ pub fn prepare_before() -> Result<(), String> {
             )
             .unwrap_or(String::from("0.50"));
         LIVENESS_THRESHOLD.store((liveness_threshold.parse().unwrap_or(0.5) * 100.0) as u32, Ordering::SeqCst);
+
+        // 获取面容对齐模式
+        let face_aligned_type = conn
+            .query_row(
+                "SELECT val FROM options WHERE key = 'faceAlignedType'",
+                (),
+                |row| row.get::<&str, String>("val"),
+            )
+            .unwrap_or(String::from("default"));
+        set_face_aligned_mode(face_aligned_type);
     }
 
     Ok(())
@@ -231,6 +251,8 @@ pub fn unlock(user_name: String, password: String) -> windows::core::Result<()> 
 
 // 面容识别主程序
 fn run(mut camera: VideoCapture) -> Result<bool, String> {
+    // 未检测到人脸的次数
+    let mut not_face_count = 0;
     // 加载模型
     let resource_path = get_global_log_path()
         .join("resources")
@@ -337,7 +359,7 @@ fn run(mut camera: VideoCapture) -> Result<bool, String> {
             frame =
                 read_mat_from_camera(&mut camera).map_err(|e| format!("摄像头读取失败: {}", e))?;
             // 提取特征点
-            let (aligned, cur_feature) = match get_feature(
+            let (aligned, cur_feature, face_range) = match get_feature(
                 &frame,
                 json_data.face_detection_threshold,
                 &mut detector,
@@ -348,7 +370,12 @@ fn run(mut camera: VideoCapture) -> Result<bool, String> {
                     let err_msg = format!("特征提取失败: {}", e);
                     if err_msg.contains("未检测到人脸") {
                         // 未检测到人脸不动
-                        sleep(Duration::from_millis(200));
+                        sleep(Duration::from_millis(500));
+                        not_face_count += 1;
+                        if not_face_count >= NOT_FACE_DELAY.load(Ordering::SeqCst) {
+                            // 未检测到人脸超过指定时间，退出整个函数
+                            return Err(String::from("未检测到人脸超过指定时间, 停止面容识别"));
+                        }
                         continue;
                     } else {
                         // 其他错误退出整个函数
@@ -360,10 +387,14 @@ fn run(mut camera: VideoCapture) -> Result<bool, String> {
             // 如果启用了活体检测，进行活体检测
             if LIVENESS_ENABLE.load(Ordering::SeqCst) {
                 // 图像预处理
-                let blob = opencv::dnn::blob_from_image(
-                    &aligned, 1.0, Size::new(128, 128), 
-                    Scalar::new(0.0, 0.0, 0.0, 0.0), true, false, opencv::core::CV_32F
-                ).map_err(|e| format!("创建 Blob 失败: {:?}", e))?;
+                let face_data = face_range.at_row::<f32>(0).unwrap();
+                let aligned_face = if get_face_aligned_mode() == "default" {
+                    align_face(&frame, face_data).map_err(|e| format!("对齐人脸失败: {}", e))?
+                } else {
+                    aligned
+                };
+
+                let blob = opencv::dnn::blob_from_image(&aligned_face, 1.0/255.0, Size::new(128, 128), Scalar::all(0.0), true, false, opencv::core::CV_32F).map_err(|e| format!("创建 Blob 失败: {:?}", e))?;
                 liveness_net.set_input(&blob, "", 1.0, Scalar::default()).map_err(|e| format!("设置输入失败: {:?}", e))?;
                 let out_layer_names = liveness_net.get_unconnected_out_layers_names().map_err(|e| format!("获取输出层失败: {:?}", e))?;
                 let mut output_blobs = Vector::<Mat>::new();
@@ -373,12 +404,14 @@ fn run(mut camera: VideoCapture) -> Result<bool, String> {
                 let mut real_score = 0.0;
 
                 if !output_blobs.is_empty() {
+                    let liveness_threshold = LIVENESS_THRESHOLD.load(Ordering::SeqCst) as f32 / 100.0;
+                    let p = liveness_threshold.max(1e-6).min(1.0 - 1e-6);
+                    let logit_threshold = (p / (1.0 - p)).ln();
+
                     let output = output_blobs.get(0).map_err(|_| format!("无输出"))?;
-                    
-                    // 输出是 [1, 3] 的矩阵
-                    let scores = output.at_row::<f32>(0).map_err(|e| format!("获取输出行失败: {:?}", e))?;
-                    real_score = scores[0] / 100.0;
-                    is_real = real_score > LIVENESS_THRESHOLD.load(Ordering::SeqCst) as f32 / 100.0; // 置信度阈值
+                    let logits = output.at_row::<f32>(0).map_err(|e| format!("获取输出行失败: {:?}", e))?;
+                    real_score = logits[0] - logits[1];
+                    is_real = real_score >= logit_threshold;
                 }
 
                 if !is_real {
@@ -572,7 +605,7 @@ fn get_feature(
     face_detection_threshold: f32,
     detector: &mut Ptr<FaceDetectorYN>,
     recognizer: &mut Ptr<FaceRecognizerSF>,
-) -> Result<(Mat, Mat), String> {
+) -> Result<(Mat, Mat, Mat), String> {
     let faces = {
         let mut faces = Mat::default();
         detector
@@ -599,7 +632,7 @@ fn get_feature(
             .feature(&aligned, &mut feature)
             .map_err(|e| format!("特征提取失败: {}", e))?;
 
-        Ok((aligned.clone(), feature.clone()))
+        Ok((aligned.clone(), feature.clone(), faces.clone()))
     } else {
         Err("未检测到人脸".into())
     }
@@ -624,4 +657,71 @@ fn insert_unlock_log(
         ])
         .map_err(|e| format!("插入解锁日志失败：{:?}", e))?;
     Ok(())
+}
+
+
+// 手动裁剪人脸
+fn align_face(frame: &Mat, face_data: &[f32]) -> opencv::Result<Mat> {
+    // 获取关键点
+    let left_eye = Point2f::new(face_data[4], face_data[5]);
+    let right_eye = Point2f::new(face_data[6], face_data[7]);
+
+    // 计算目标位置（将双眼对齐到 128x128 的固定位置）
+    // 设定目标图像中眼睛的理想位置，这决定了人脸在框内的占比
+    let target_w = 128.0;
+    let target_h = 128.0;
+    let eye_y_position = 0.35; // 眼睛位于上方 35% 处
+    let eye_x_distance = 0.30; // 眼睛距离中心两侧的距离
+
+    let desired_left_eye = Point2f::new(target_w * (0.5 - eye_x_distance), target_h * eye_y_position);
+    let desired_right_eye = Point2f::new(target_w * (0.5 + eye_x_distance), target_h * eye_y_position);
+
+    // 计算相似变换矩阵 (Similarity Transform)
+    // 根据两眼中心、角度、距离进行缩放和平移
+    let d_x = right_eye.x - left_eye.x;
+    let d_y = right_eye.y - left_eye.y;
+    let dist = (d_x.powi(2) + d_y.powi(2)).sqrt();
+    let angle = (d_y as f64).atan2(d_x as f64) * 180.0 / std::f64::consts::PI;
+
+    let desired_dist = (desired_right_eye.x - desired_left_eye.x) as f64;
+    let scale = desired_dist / dist as f64;
+
+    let center = Point2f::new((left_eye.x + right_eye.x) / 2.0, (left_eye.y + right_eye.y) / 2.0);
+
+    // 获取基础旋转缩放矩阵 (2x3 矩阵)
+    let mut trans_mat = imgproc::get_rotation_matrix_2d(center, angle, scale)?;
+
+    // 修正平移分量 (Column 2)
+    let target_center_x = target_w * 0.5;
+    let target_center_y = target_h * eye_y_position;
+
+    // 根据仿射变换公式：dst = M * src
+    // M_02 = target_x - (M_00 * src_x + M_01 * src_y)
+    // M_12 = target_y - (M_10 * src_x + M_11 * src_y)
+    let m = trans_mat.at_row::<f64>(0)?; // 获取第一行数据指针
+    let m00 = m[0];
+    let m01 = m[1];
+    let m10 = trans_mat.at_row::<f64>(1)?[0];
+    let m11 = trans_mat.at_row::<f64>(1)?[1];
+
+    let tx = target_center_x as f64 - (m00 * center.x as f64 + m01 * center.y as f64);
+    let ty = target_center_y as f64 - (m10 * center.x as f64 + m11 * center.y as f64);
+
+    // 安全地更新平移向量
+    *trans_mat.at_2d_mut::<f64>(0, 2)? = tx;
+    *trans_mat.at_2d_mut::<f64>(1, 2)? = ty;
+
+    // 执行变换
+    let mut aligned_face = Mat::default();
+    imgproc::warp_affine(
+        &frame, 
+        &mut aligned_face, 
+        &trans_mat, 
+        Size::new(128, 128), 
+        imgproc::INTER_LINEAR, 
+        opencv::core::BORDER_CONSTANT, 
+        Scalar::default()
+    )?;
+
+    Ok(aligned_face)
 }

@@ -156,8 +156,13 @@
             if(!verificationMode.value){
                 // 面容录入
                 const res = await invoke('check_face_from_camera', {faceDetectionThreshold: getFaceDetectionThresholdValue()});
-                capturedImage.value = res.data.display_base64;
-                rawImageForSystem = res.data.raw_base64;
+                if(res.data.display_base64 === "未检测到人脸"){
+                    capturedImage.value = res.data.raw_base64;
+                    rawImageForSystem = "";
+                } else {
+                    capturedImage.value = res.data.display_base64;
+                    rawImageForSystem = res.data.raw_base64;
+                }
             } else {
                 // 一致性对比
                 const res = await invoke('verify_face', { 
@@ -165,6 +170,7 @@
                     faceDetectionThreshold: getFaceDetectionThresholdValue(),
                     livenessEnabled: optionsStore.getOptionValueByKey('livenessEnabled') ? (optionsStore.getOptionValueByKey('livenessEnabled') == 'false' ? false : true) : false,
                     livenessThreshold: parseFloat(optionsStore.getOptionValueByKey('livenessThreshold')) || 0.50,
+                    faceAlignedType: optionsStore.getOptionValueByKey('faceAlignedType') || 'default',
                 });
                 if(res.data.display_base64) {
                     verifyingStreamImage.value = res.data.display_base64;
@@ -197,6 +203,11 @@
     };
 
     const confirmCapture = () => {
+        if(!rawImageForSystem || !isCameraStreaming.value){
+            ElMessage.warning("人脸数据不正确，无法保存，尝试拉低检测灵敏度。")
+            return;
+        }
+
         stopCamera().then(()=>{
             if(capturedImage.value && rawImageForSystem){
                 isEditFaceImage = true;

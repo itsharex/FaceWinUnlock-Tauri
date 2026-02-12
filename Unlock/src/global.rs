@@ -36,6 +36,8 @@ pub static RETRY_DELAY: AtomicI32 = AtomicI32::new(10000);
 pub static LIVENESS_ENABLE: AtomicBool = AtomicBool::new(false);
 // 活体检测阈值
 pub static LIVENESS_THRESHOLD: AtomicU32 = AtomicU32::new(50);
+// 未检测到人脸时多少秒停止面容识别
+pub static NOT_FACE_DELAY: AtomicU32 = AtomicU32::new(3);
 
 #[derive(Debug, Clone, Copy)]
 pub struct SafeHWND(HWND);
@@ -58,6 +60,7 @@ lazy_static::lazy_static! {
     static ref ROOT_DIR: Mutex<PathBuf> = Mutex::new(PathBuf::new());
     static ref GLOBAL_HWND: Mutex<Option<SafeHWND>> = Mutex::new(None);
     static ref FACE_RECOG_TYPE: Mutex<String> = Mutex::new(String::from("operation"));
+    static ref FACE_ALIGNED_TYPE: Mutex<String> = Mutex::new(String::from("default"));
 }
 
 // 获取全局路径
@@ -99,4 +102,16 @@ pub fn set_face_recognition_mode(mode: String) {
 pub fn get_face_recognition_mode() -> String {
     let global_face_recognition_mode = FACE_RECOG_TYPE.lock().unwrap();
     global_face_recognition_mode.clone()
+}
+
+// 设置面容对齐模式
+pub fn set_face_aligned_mode(mode: String) {
+    let mut global_face_aligned_mode = FACE_ALIGNED_TYPE.lock().unwrap();
+    *global_face_aligned_mode = mode;
+}
+
+// 获取面容对齐模式
+pub fn get_face_aligned_mode() -> String {
+    let global_face_aligned_mode = FACE_ALIGNED_TYPE.lock().unwrap();
+    global_face_aligned_mode.clone()
 }

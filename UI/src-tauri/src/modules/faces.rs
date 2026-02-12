@@ -5,7 +5,7 @@ use std::{
 use crate::{utils::custom_result::CustomResult, APP_STATE, ROOT_DIR};
 use base64::{engine::general_purpose, Engine};
 use opencv::{
-    core::{Mat, Point, Rect, Scalar, Size, Vector},
+    core::{Mat, Point, Point2f, Rect, Scalar, Size, Vector},
     imgcodecs, imgproc,
     objdetect::FaceRecognizerSF_DisType,
     prelude::*,
@@ -94,6 +94,7 @@ pub fn check_face_from_camera(face_detection_threshold: f32) -> Result<CustomRes
     let frame = read_mat_from_camera()
         .map_err(|e| CustomResult::error(Some(format!("摄像头读取失败: {}", e)), None))?;
 
+        
     let result = detect_and_format(frame, face_detection_threshold)
         .map_err(|e| CustomResult::error(Some(format!("OpenCV 检测失败: {}", e)), None))?;
 
@@ -113,6 +114,7 @@ pub async fn verify_face(
     face_detection_threshold: f32,
     liveness_enabled: bool,
     liveness_threshold: f32,
+    face_aligned_type: String,
 ) -> Result<CustomResult, CustomResult> {
     let frame = read_mat_from_camera()
         .map_err(|e| CustomResult::error(Some(format!("摄像头读取失败: {}", e)), None))?;
@@ -141,7 +143,7 @@ pub async fn verify_face(
             CustomResult::error(Some(format!("特征提取失败: {}", e)), None);
         }
     }
-    let (cur_aligned, cur_feature) = result.unwrap();
+    let (cur_aligned, cur_feature, face_range) = result.unwrap();
     
     if liveness_enabled {
         let mut app_state = APP_STATE
@@ -157,25 +159,32 @@ pub async fn verify_face(
         let liveness_net = &mut app_state.liveness.as_mut().unwrap().inner;
 
         // 图像预处理
-        let blob = opencv::dnn::blob_from_image(
-            &cur_aligned, 1.0, Size::new(128, 128), 
-            Scalar::new(0.0, 0.0, 0.0, 0.0), true, false, opencv::core::CV_32F
-        ).map_err(|e| CustomResult::error(Some(format!("创建 Blob 失败: {:?}", e)), None))?;
-        liveness_net.set_input(&blob, "", 1.0, Scalar::default()).map_err(|e| CustomResult::error(Some(format!("设置输入失败: {:?}", e)), None))?;
-        let out_layer_names = liveness_net.get_unconnected_out_layers_names().map_err(|e| CustomResult::error(Some(format!("获取输出层失败: {:?}", e)), None))?;
+        let face_data = face_range.at_row::<f32>(0).unwrap();
+        let aligned_face = if face_aligned_type == "default" {
+            align_face(&frame, face_data).map_err(|e| CustomResult::error(Some(format!("对齐人脸失败: {}", e)), None))?
+        } else {
+            cur_aligned
+        };
+
+        let blob = opencv::dnn::blob_from_image(&aligned_face, 1.0/255.0, Size::new(128, 128), Scalar::all(0.0), true, false, opencv::core::CV_32F)
+        .map_err(|e| CustomResult::error(Some(format!("图像预处理失败: {}", e)), None))?;
+        liveness_net.set_input(&blob, "", 1.0, Scalar::default())
+        .map_err(|e| CustomResult::error(Some(format!("设置输入失败: {}", e)), None))?;
         let mut output_blobs = Vector::<Mat>::new();
-        liveness_net.forward(&mut output_blobs, &out_layer_names).map_err(|e| CustomResult::error(Some(format!("执行推理失败: {:?}", e)), None))?; 
+        liveness_net.forward(&mut output_blobs, &liveness_net.get_unconnected_out_layers_names().map_err(|e| CustomResult::error(Some(format!("获取输出层失败: {}", e)), None))?)
+        .map_err(|e| CustomResult::error(Some(format!("执行推理失败: {}", e)), None))?; 
 
         let mut is_real = false;
         let mut real_score = 0.0;
 
         if !output_blobs.is_empty() {
+            let p = liveness_threshold.max(1e-6).min(1.0 - 1e-6);
+            let logit_threshold = (p / (1.0 - p)).ln();
+
             let output = output_blobs.get(0).map_err(|_| CustomResult::error(Some(String::from("无输出")), None))?;
-            
-            // 输出是 [1, 3] 的矩阵
-            let scores = output.at_row::<f32>(0).map_err(|e| CustomResult::error(Some(format!("获取输出行失败: {:?}", e)), None))?;
-            real_score = scores[0] / 100.0;
-            is_real = real_score > liveness_threshold; // 置信度阈值
+            let logits = output.at_row::<f32>(0).map_err(|e| CustomResult::error(Some(format!("获取输出行失败: {:?}", e)), None))?;
+            real_score = logits[0] - logits[1];
+            is_real = real_score >= logit_threshold;
         }
         
         if !is_real {
@@ -200,7 +209,7 @@ pub async fn verify_face(
     let ref_img = imgcodecs::imdecode(&v, opencv::imgcodecs::IMREAD_COLOR)
         .map_err(|e| CustomResult::error(Some(format!("从bse64读取图片失败: {}", e)), None))?;
 
-    let (_ref_aligned, ref_feature) = get_feature(&ref_img, face_detection_threshold)
+    let (_ref_aligned, ref_feature, _) = get_feature(&ref_img, face_detection_threshold)
         .map_err(|e| CustomResult::error(Some(format!("特征提取失败: {}", e)), None))?;
     
 
@@ -260,7 +269,7 @@ pub fn save_face_registration(
     let ref_img = imgcodecs::imdecode(&v, opencv::imgcodecs::IMREAD_COLOR)
         .map_err(|e| CustomResult::error(Some(format!("从bse64读取图片失败: {}", e)), None))?;
 
-    let (_ref_aligned, ref_feature) = get_feature(&ref_img, face_detection_threshold)
+    let (_ref_aligned, ref_feature, _) = get_feature(&ref_img, face_detection_threshold)
         .map_err(|e| CustomResult::error(Some(format!("特征提取失败: {}", e)), None))?;
 
     let descriptor = FaceDescriptor::from_mat(&name, &ref_feature)
@@ -307,7 +316,7 @@ pub fn save_face_registration(
 
 /// 提取特征点
 /// return (裁切后的图片, 特征点)
-pub fn get_feature(img: &Mat, face_detection_threshold: f32) -> Result<(Mat, Mat), String> {
+pub fn get_feature(img: &Mat, face_detection_threshold: f32) -> Result<(Mat, Mat, Mat), String> {
     let mut app_state = APP_STATE
         .lock()
         .map_err(|e| format!("获取app状态失败 {}", e))?;
@@ -353,7 +362,7 @@ pub fn get_feature(img: &Mat, face_detection_threshold: f32) -> Result<(Mat, Mat
             .feature(&aligned, &mut feature)
             .map_err(|e| format!("特征提取失败: {}", e))?;
 
-        Ok((aligned.clone(), feature.clone()))
+        Ok((aligned.clone(), feature.clone(), faces.clone()))
     } else {
         Err("未检测到人脸".into())
     }
@@ -505,7 +514,10 @@ fn detect_and_format(src: Mat, face_detection_threshold: f32) -> Result<CaptureR
             raw_base64: mat_to_base64(&raw_mat),
         })
     } else {
-        Err(String::from("未检测到人脸"))
+        Ok(CaptureResponse {
+            display_base64: String::from("未检测到人脸"),
+            raw_base64: mat_to_base64(&raw_mat),
+        })
     }
 }
 
@@ -536,4 +548,70 @@ pub fn load_face_data(path: &PathBuf) -> Result<FaceDescriptor, Box<dyn std::err
     file.read_to_end(&mut buffer)?;
     let decoded: FaceDescriptor = bincode::deserialize(&buffer)?;
     Ok(decoded)
+}
+
+// 手动裁剪人脸
+fn align_face(frame: &Mat, face_data: &[f32]) -> opencv::Result<Mat> {
+    // 获取关键点
+    let left_eye = Point2f::new(face_data[4], face_data[5]);
+    let right_eye = Point2f::new(face_data[6], face_data[7]);
+
+    // 计算目标位置（将双眼对齐到 128x128 的固定位置）
+    // 设定目标图像中眼睛的理想位置，这决定了人脸在框内的占比
+    let target_w = 128.0;
+    let target_h = 128.0;
+    let eye_y_position = 0.35; // 眼睛位于上方 35% 处
+    let eye_x_distance = 0.30; // 眼睛距离中心两侧的距离
+
+    let desired_left_eye = Point2f::new(target_w * (0.5 - eye_x_distance), target_h * eye_y_position);
+    let desired_right_eye = Point2f::new(target_w * (0.5 + eye_x_distance), target_h * eye_y_position);
+
+    // 计算相似变换矩阵 (Similarity Transform)
+    // 根据两眼中心、角度、距离进行缩放和平移
+    let d_x = right_eye.x - left_eye.x;
+    let d_y = right_eye.y - left_eye.y;
+    let dist = (d_x.powi(2) + d_y.powi(2)).sqrt();
+    let angle = (d_y as f64).atan2(d_x as f64) * 180.0 / std::f64::consts::PI;
+
+    let desired_dist = (desired_right_eye.x - desired_left_eye.x) as f64;
+    let scale = desired_dist / dist as f64;
+
+    let center = Point2f::new((left_eye.x + right_eye.x) / 2.0, (left_eye.y + right_eye.y) / 2.0);
+
+    // 获取基础旋转缩放矩阵 (2x3 矩阵)
+    let mut trans_mat = imgproc::get_rotation_matrix_2d(center, angle, scale)?;
+
+    // 修正平移分量 (Column 2)
+    let target_center_x = target_w * 0.5;
+    let target_center_y = target_h * eye_y_position;
+
+    // 根据仿射变换公式：dst = M * src
+    // M_02 = target_x - (M_00 * src_x + M_01 * src_y)
+    // M_12 = target_y - (M_10 * src_x + M_11 * src_y)
+    let m = trans_mat.at_row::<f64>(0)?; // 获取第一行数据指针
+    let m00 = m[0];
+    let m01 = m[1];
+    let m10 = trans_mat.at_row::<f64>(1)?[0];
+    let m11 = trans_mat.at_row::<f64>(1)?[1];
+
+    let tx = target_center_x as f64 - (m00 * center.x as f64 + m01 * center.y as f64);
+    let ty = target_center_y as f64 - (m10 * center.x as f64 + m11 * center.y as f64);
+
+    // 安全地更新平移向量
+    *trans_mat.at_2d_mut::<f64>(0, 2)? = tx;
+    *trans_mat.at_2d_mut::<f64>(1, 2)? = ty;
+
+    // 执行变换
+    let mut aligned_face = Mat::default();
+    imgproc::warp_affine(
+        &frame, 
+        &mut aligned_face, 
+        &trans_mat, 
+        Size::new(128, 128), 
+        imgproc::INTER_LINEAR, 
+        opencv::core::BORDER_CONSTANT, 
+        Scalar::default()
+    )?;
+
+    Ok(aligned_face)
 }

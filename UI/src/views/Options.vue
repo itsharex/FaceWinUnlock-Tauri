@@ -42,11 +42,13 @@
 		faceRecogType: optionsStore.getOptionValueByKey('faceRecogType') || 'operation',
 		silentRun: optionsStore.getOptionValueByKey('silentRun') ? (optionsStore.getOptionValueByKey('silentRun') == 'false' ? false : true) : false,
 		retryDelay: parseFloat(optionsStore.getOptionValueByKey('retryDelay')) || 10.0,
+		notFaceDelay: parseFloat(optionsStore.getOptionValueByKey('notFaceDelay')) || 3,
 		// 是否开机面容识别
 		isAutoFaceRecogOnStart: false,
 		// 活体检测的配置
 		livenessEnabled: optionsStore.getOptionValueByKey('livenessEnabled') ? (optionsStore.getOptionValueByKey('livenessEnabled') == 'false' ? false : true) : false,
 		livenessThreshold: parseFloat(optionsStore.getOptionValueByKey('livenessThreshold')) || 0.50,
+		faceAlignedType: optionsStore.getOptionValueByKey('faceAlignedType') || 'default',
 		// 登录安全
 		loginEnabled: optionsStore.getOptionValueByKey('loginEnabled') ? (optionsStore.getOptionValueByKey('loginEnabled') == 'false' ? false : true) : false,
 		loginPassword: optionsStore.getOptionValueByKey('loginPassword') || '',
@@ -141,8 +143,10 @@
 			faceRecogType: config.faceRecogType,
 			silentRun: config.silentRun,
 			retryDelay: config.retryDelay,
+			notFaceDelay: isNaN(parseInt(config.notFaceDelay)) ? "3" : String(parseInt(config.notFaceDelay)),
 			livenessEnabled: config.livenessEnabled,
 			livenessThreshold: config.livenessThreshold,
+			faceAlignedType: config.faceAlignedType,
 			loginEnabled: config.loginEnabled ? "true" : "false",
 			loginPassword: config.loginPassword,
 			loginMethod: config.loginMethod
@@ -319,6 +323,32 @@
 		
 	}
 
+	// 活体检测开关切换
+	const livenessEnabledChange = ()=>{
+		if(config.livenessEnabled){
+			ElMessageBox.confirm(
+				'活体检测准确率低，<font color="red">误判极高，不建议开启</font><br />' +
+				'想用活体检测，推荐使用2.2版本<br />' +
+				'是否继续开启活体检测？', 
+				'警告', 
+				{
+					dangerouslyUseHTMLString: true,
+					confirmButtonText: '我明白风险，继续开启',
+					confirmButtonClass: 'el-button--danger',
+					cancelButtonText: '取消',
+					type: 'warning'
+				}
+			).then(() => {
+				// 继续开启活体检测
+			}).catch(() => {
+				// 取消开启活体检测
+				config.livenessEnabled = false;
+			});
+		}else{
+			// 关闭活体检测
+		}
+	}
+
 	function checkServiceRunning(loadingInstance, msg = ""){
 		invoke("check_process_running").then(()=>{
 			if(msg != ""){
@@ -484,6 +514,19 @@
 									style="width: 120px;"
 								/>
 							</div>
+							<div class="option-row">
+								<div class="row-text">
+									<p class="label">未检测到面容延迟（秒）</p>
+									<p class="sub">未检测到面容时，时隔多长时间停止运行面容识别解锁</p>
+								</div>
+								<el-input-number 
+									v-model="config.notFaceDelay"
+									:min="1" 
+									:max="120" 
+									:step="1" 
+									style="width: 120px;"
+								/>
+							</div>
 						</el-collapse-item>
 					
 						<el-collapse-item title="活体检测" name="3">
@@ -491,9 +534,9 @@
 							<div class="option-row">
 								<div class="row-text">
 									<p class="label">启用活体检测</p>
-									<p class="sub">在解锁时进行活体验证，防止照片/视频攻击</p>
+									<p class="sub">不推荐开启，准确率不高，想用活体检测，推荐使用2.2版本</p>
 								</div>
-								<el-switch v-model="config.livenessEnabled" />
+								<el-switch v-model="config.livenessEnabled" @change="livenessEnabledChange"/>
 							</div>
 
 							<!-- 阈值设置 -->
@@ -510,6 +553,18 @@
 									:precision="2"
 									style="width: 120px;"
 								/>
+							</div>
+
+							<!-- 面容对齐方式 -->
+							<div class="option-row">
+								<div class="row-text">
+									<p class="label">面容对齐方式</p>
+									<p class="sub">识别到面容后以何种方式对齐人脸</p>
+								</div>
+								<el-select v-model="config.faceAlignedType" style="width: 170px">
+									<el-option :value="'default'" :label="'默认对齐'"/>
+									<el-option :value="'model'" :label="'模型对齐'"/>
+								</el-select>
 							</div>
 						</el-collapse-item>
 
